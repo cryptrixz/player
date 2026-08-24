@@ -6,7 +6,7 @@ BRANCH="main"
 INSTALL_DIR="$HOME/spotify-overlay"
 API_URL="https://api.github.com/repos/$REPO/contents/music.json"
 
-echo "== Spotify Overlay Setup =="
+echo "Dom :3"
 echo "This sets up a background script that pushes your Spotify status to GitHub"
 echo "so your Roblox overlay can show it. No Xcode or git required."
 echo ""

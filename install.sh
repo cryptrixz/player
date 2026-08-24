@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 set -e
 
 REPO="cryptrixz/player"
@@ -6,7 +6,7 @@ BRANCH="main"
 INSTALL_DIR="$HOME/spotify-overlay"
 API_URL="https://api.github.com/repos/$REPO/contents/music.json"
 
-echo "Dom :3"
+echo "== Music Player =="
 echo "This sets up a background script that pushes your Spotify status to GitHub"
 echo "so your Roblox overlay can show it. No Xcode or git required."
 echo ""
@@ -61,23 +61,53 @@ while true; do
         fi
     fi
 
-    # --- If desktop app isn't playing, check browser tabs instead ---
-    # Check the tab's URL (not just its title) so we only match real
-    # open.spotify.com tabs, not any tab that happens to mention "Spotify".
+    # --- If desktop app isn't playing, scan ALL browser tabs in ALL windows ---
+    # (not just the active/frontmost one) for a tab whose URL is open.spotify.com.
+    # AppleScript can query background tabs directly — the tab doesn't need focus.
     if [ "$FOUND" == "no" ]; then
-        CHROME_URL=$(osascript -e 'tell application "Google Chrome" to get URL of active tab of first window' 2>/dev/null)
-        CHROME_TITLE=$(osascript -e 'tell application "Google Chrome" to get title of active tab of first window' 2>/dev/null)
-        SAFARI_URL=$(osascript -e 'tell application "Safari" to get URL of current tab of first window' 2>/dev/null)
-        SAFARI_TITLE=$(osascript -e 'tell application "Safari" to get name of current tab of first window' 2>/dev/null)
+        CHROME_TITLE=$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
+tell application "Google Chrome"
+    if it is running then
+        repeat with w in windows
+            repeat with t in tabs of w
+                if (URL of t) contains "open.spotify.com" then
+                    return title of t
+                end if
+            end repeat
+        end repeat
+    end if
+    return ""
+end tell
+APPLESCRIPT_EOF
+)
 
-        if [[ "$CHROME_URL" == *"open.spotify.com"* ]]; then
-            CLEAN_TITLE=$(echo "$CHROME_TITLE" | sed 's/ - Spotify//g')
-            TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
-            ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
-            STATUS="playing"
-            FOUND="yes"
-        elif [[ "$SAFARI_URL" == *"open.spotify.com"* ]]; then
-            CLEAN_TITLE=$(echo "$SAFARI_TITLE" | sed 's/ - Spotify//g')
+        if [ -z "$CHROME_TITLE" ]; then
+            SAFARI_TITLE=$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
+tell application "Safari"
+    if it is running then
+        repeat with w in windows
+            repeat with t in tabs of w
+                if (URL of t) contains "open.spotify.com" then
+                    return name of t
+                end if
+            end repeat
+        end repeat
+    end if
+    return ""
+end tell
+APPLESCRIPT_EOF
+)
+        fi
+
+        FOUND_TITLE=""
+        if [ -n "$CHROME_TITLE" ]; then
+            FOUND_TITLE="$CHROME_TITLE"
+        elif [ -n "$SAFARI_TITLE" ]; then
+            FOUND_TITLE="$SAFARI_TITLE"
+        fi
+
+        if [ -n "$FOUND_TITLE" ]; then
+            CLEAN_TITLE=$(echo "$FOUND_TITLE" | sed 's/ - Spotify//g')
             TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
             ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
             STATUS="playing"

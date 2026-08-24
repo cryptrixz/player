@@ -3,6 +3,9 @@ local Players = game:GetService("Players")
 
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
+local oldOverlay = playerGui:FindFirstChild("SpotifyOverlay")
+if oldOverlay then oldOverlay:Destroy() end
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SpotifyOverlay"
 screenGui.ResetOnSpawn = false
@@ -107,7 +110,7 @@ timeTotal.Text = "0:00"
 timeTotal.Parent = mainFrame
 
 local httpService = game:GetService("HttpService")
-local customRequest = syn and syn.request or http_request or request
+local customRequest = syn and syn.request or http_request or request or (http and http.request)
 
 local function formatTime(seconds)
 	local mins = math.floor(seconds / 60)
@@ -115,10 +118,14 @@ local function formatTime(seconds)
 	return string.format("%d:%02d", mins, secs)
 end
 
+local loadedUrl = getfenv(2) and getfenv(2).script_url or "https://githubusercontent.com"
+local baseUrl = string.gsub(loadedUrl, "overlay%.lua.*", "")
+local musicUrl = baseUrl .. "music.json?t="
+
 while true do
 	local success, response = pcall(function()
 		return customRequest({
-			Url = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua" .. os.time(),
+			Url = musicUrl .. os.time(),
 			Method = "GET"
 		})
 	end)
@@ -150,6 +157,5 @@ while true do
 		progressBarFill.Size = UDim2.new(0, 0, 1, 0)
 	end
 	
-	task.wait(10)
+	task.wait(5)
 end
-

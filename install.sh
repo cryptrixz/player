@@ -14,7 +14,6 @@ echo ""
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Ask for GitHub token — hidden input, never echoed, never printed
 read -s -p "Paste your GitHub Personal Access Token (input hidden): " GITHUB_TOKEN
 echo ""
 if [ -z "$GITHUB_TOKEN" ]; then
@@ -22,14 +21,10 @@ if [ -z "$GITHUB_TOKEN" ]; then
     exit 1
 fi
 
-# Store token locally only, in the user's home dir — never inside the repo,
-# never pushed anywhere, permissions locked to owner-only.
 TOKEN_FILE="$HOME/.spotify_overlay_token"
 echo "$GITHUB_TOKEN" > "$TOKEN_FILE"
 chmod 600 "$TOKEN_FILE"
 
-# Write the actual push script — it reads the token from the local file above,
-# so the token itself never lives inside push_music.sh.
 cat > "$INSTALL_DIR/push_music.sh" <<'SCRIPT_EOF'
 #!/bin/bash
 
@@ -51,14 +46,23 @@ while true; do
     ARTIST=""
     POS=0
     DUR=1
+    FOUND="no"
 
+    # --- Try desktop app first, but only USE it if it's actually playing ---
     if pgrep -x "Spotify" > /dev/null; then
-        STATUS=$(osascript -e 'tell application "Spotify" to player state' 2>/dev/null)
-        TRACK=$(osascript -e 'tell application "Spotify" to name of current track' 2>/dev/null | sed 's/"/\\"/g')
-        ARTIST=$(osascript -e 'tell application "Spotify" to artist of current track' 2>/dev/null | sed 's/"/\\"/g')
-        POS=$(osascript -e 'tell application "Spotify" to player position' 2>/dev/null | cut -d'.' -f1)
-        DUR=$(osascript -e 'tell application "Spotify" to (duration of current track) / 1000' 2>/dev/null | cut -d'.' -f1)
-    else
+        APP_STATUS=$(osascript -e 'tell application "Spotify" to player state' 2>/dev/null)
+        if [ "$APP_STATUS" == "playing" ]; then
+            STATUS="playing"
+            TRACK=$(osascript -e 'tell application "Spotify" to name of current track' 2>/dev/null | sed 's/"/\\"/g')
+            ARTIST=$(osascript -e 'tell application "Spotify" to artist of current track' 2>/dev/null | sed 's/"/\\"/g')
+            POS=$(osascript -e 'tell application "Spotify" to player position' 2>/dev/null | cut -d'.' -f1)
+            DUR=$(osascript -e 'tell application "Spotify" to (duration of current track) / 1000' 2>/dev/null | cut -d'.' -f1)
+            FOUND="yes"
+        fi
+    fi
+
+    # --- If desktop app isn't playing, check browser tabs instead ---
+    if [ "$FOUND" == "no" ]; then
         CHROME_TITLE=$(osascript -e 'tell application "Google Chrome" to get title of active tab of first window' 2>/dev/null)
         SAFARI_TITLE=$(osascript -e 'tell application "Safari" to get name of current tab of first window' 2>/dev/null)
 
@@ -67,17 +71,20 @@ while true; do
             TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
             ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
             STATUS="playing"
+            FOUND="yes"
         elif [[ "$SAFARI_TITLE" == *"Spotify"* ]]; then
             CLEAN_TITLE=$(echo "$SAFARI_TITLE" | sed 's/ - Spotify//g')
             TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
             ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
             STATUS="playing"
+            FOUND="yes"
         fi
     fi
 
     if [ -z "$TRACK" ]; then TRACK="No Track Playing"; fi
     if [ -z "$POS" ]; then POS=0; fi
     if [ -z "$DUR" ]; then DUR=1; fi
+    if [ "$FOUND" == "no" ]; then STATUS="paused"; fi
 
     JSON_CONTENT="{\"status\":\"$STATUS\",\"track\":\"$TRACK\",\"artist\":\"$ARTIST\",\"position\":$POS,\"duration\":$DUR}"
     echo "$JSON_CONTENT" > "$HOME/spotify-overlay/music.json"
@@ -105,12 +112,14 @@ SCRIPT_EOF
 
 chmod +x "$INSTALL_DIR/push_music.sh"
 
+# Kill any old instance before starting a fresh one
+pkill -f push_music.sh 2>/dev/null || true
+sleep 1
+
 echo ""
 echo "Installed to $INSTALL_DIR"
 echo "Starting the background updater now (logs at $INSTALL_DIR/push.log)..."
 
-# Run it in the background so this one command does everything,
-# including leaving it running after the terminal window is closed.
 nohup "$INSTALL_DIR/push_music.sh" > "$INSTALL_DIR/push.log" 2>&1 &
 disown
 

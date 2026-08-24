@@ -62,17 +62,21 @@ while true; do
     fi
 
     # --- If desktop app isn't playing, check browser tabs instead ---
+    # Check the tab's URL (not just its title) so we only match real
+    # open.spotify.com tabs, not any tab that happens to mention "Spotify".
     if [ "$FOUND" == "no" ]; then
+        CHROME_URL=$(osascript -e 'tell application "Google Chrome" to get URL of active tab of first window' 2>/dev/null)
         CHROME_TITLE=$(osascript -e 'tell application "Google Chrome" to get title of active tab of first window' 2>/dev/null)
+        SAFARI_URL=$(osascript -e 'tell application "Safari" to get URL of current tab of first window' 2>/dev/null)
         SAFARI_TITLE=$(osascript -e 'tell application "Safari" to get name of current tab of first window' 2>/dev/null)
 
-        if [[ "$CHROME_TITLE" == *"Spotify"* ]]; then
+        if [[ "$CHROME_URL" == *"open.spotify.com"* ]]; then
             CLEAN_TITLE=$(echo "$CHROME_TITLE" | sed 's/ - Spotify//g')
             TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
             ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
             STATUS="playing"
             FOUND="yes"
-        elif [[ "$SAFARI_TITLE" == *"Spotify"* ]]; then
+        elif [[ "$SAFARI_URL" == *"open.spotify.com"* ]]; then
             CLEAN_TITLE=$(echo "$SAFARI_TITLE" | sed 's/ - Spotify//g')
             TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
             ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')

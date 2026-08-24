@@ -1,4 +1,3 @@
-local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
@@ -107,7 +106,8 @@ timeTotal.TextXAlignment = Enum.TextXAlignment.Left
 timeTotal.Text = "0:00"
 timeTotal.Parent = mainFrame
 
-local url = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"
+local httpService = game:GetService("HttpService")
+local customRequest = syn and syn.request or http_request or request
 
 local function formatTime(seconds)
 	local mins = math.floor(seconds / 60)
@@ -116,20 +116,32 @@ local function formatTime(seconds)
 end
 
 while true do
-	local success, result = pcall(function()
-		return HttpService:JSONDecode(HttpService:GetAsync(url .. "?nocache=" .. math.random(1, 100000)))
+	local success, response = pcall(function()
+		return customRequest({
+			Url = "https://githubusercontent.com" .. os.time(),
+			Method = "GET"
+		})
 	end)
 	
-	if success and result then
-		trackLabel.Text = result.track
-		artistLabel.Text = result.artist
-		timeCurrent.Text = formatTime(result.position)
-		timeTotal.Text = formatTime(result.duration)
+	if success and response and response.Body then
+		local jsonSuccess, result = pcall(function()
+			return httpService:JSONDecode(response.Body)
+		end)
 		
-		local percentage = math.clamp(result.position / result.duration, 0, 1)
-		TweenService:Create(progressBarFill, TweenInfo.new(1, Enum.EasingStyle.Linear), {
-			Size = UDim2.new(percentage, 0, 1, 0)
-		}):Play()
+		if jsonSuccess and result then
+			trackLabel.Text = result.track
+			artistLabel.Text = result.artist
+			timeCurrent.Text = formatTime(result.position)
+			timeTotal.Text = formatTime(result.duration)
+			
+			local percentage = math.clamp(result.position / result.duration, 0, 1)
+			TweenService:Create(progressBarFill, TweenInfo.new(1, Enum.EasingStyle.Linear), {
+				Size = UDim2.new(percentage, 0, 1, 0)
+			}):Play()
+		else
+			trackLabel.Text = "Offline"
+			artistLabel.Text = ""
+		end
 	else
 		trackLabel.Text = "Offline"
 		artistLabel.Text = ""
@@ -140,3 +152,4 @@ while true do
 	
 	task.wait(10)
 end
+

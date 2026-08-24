@@ -138,5 +138,5 @@ while true do
 		progressBarFill.Size = UDim2.new(0, 0, 1, 0)
 	end
 	
-	task.wait(10)
+	task.wait(10) 
 end

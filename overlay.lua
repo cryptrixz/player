@@ -118,7 +118,7 @@ end
 while true do
 	local success, response = pcall(function()
 		return customRequest({
-			Url = "https://githubusercontent.com" .. os.time(),
+			Url = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua" .. os.time(),
 			Method = "GET"
 		})
 	end)

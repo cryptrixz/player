@@ -118,9 +118,7 @@ local function formatTime(seconds)
 	return string.format("%d:%02d", mins, secs)
 end
 
-local loadedUrl = getfenv(2) and getfenv(2).script_url or "https://githubusercontent.com"
-local baseUrl = string.gsub(loadedUrl, "overlay%.lua.*", "")
-local musicUrl = baseUrl .. "music.json?t="
+local musicUrl = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/music.json?t="
 
 while true do
 	local success, response = pcall(function()

@@ -107,7 +107,7 @@ timeTotal.TextXAlignment = Enum.TextXAlignment.Left
 timeTotal.Text = "0:00"
 timeTotal.Parent = mainFrame
 
-local url = "https://github.io"
+local url = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"
 
 local function formatTime(seconds)
 	local mins = math.floor(seconds / 60)

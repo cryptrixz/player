@@ -2,33 +2,37 @@
 set -e
 
 INSTALL_DIR="$HOME/spotify-overlay"
-BUCKET_FILE="$HOME/.spotify_overlay_bucket"
+BLOB_FILE="$HOME/.spotify_overlay_blob"
 
-echo "== Installer =="
+echo "== Spotify =="
 echo "This sets up a background script that publishes your Spotify status"
-echo "to a free, anonymous storage bucket so your Roblox overlay can read it."
+echo "to a free, anonymous JSON storage blob so your Roblox overlay can read it."
 echo "No GitHub token, no git, no Xcode, no account of any kind required."
 echo ""
 
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# --- Create a fresh anonymous kvdb.io bucket (no login, no API key) ---
-if [ -f "$BUCKET_FILE" ]; then
-    BUCKET_ID=$(cat "$BUCKET_FILE")
-    echo "Reusing existing bucket: $BUCKET_ID"
+# --- Create a fresh anonymous jsonblob.com blob (no login, no API key) ---
+if [ -f "$BLOB_FILE" ]; then
+    BLOB_ID=$(cat "$BLOB_FILE")
+    echo "Reusing existing blob: $BLOB_ID"
 else
-    echo "Creating a new anonymous storage bucket..."
-    BUCKET_ID=$(curl -s -d "email=noreply@example.com" https://kvdb.io)
-    if [ -z "$BUCKET_ID" ]; then
-        echo "Failed to create a bucket. Check your internet connection and try again."
+    echo "Creating a new anonymous JSON blob..."
+    LOCATION=$(curl -s -i -X POST "https://jsonblob.com/api/jsonBlob" \
+        -H "Content-Type: application/json" \
+        -d '{"status":"paused","track":"No Track Playing","artist":"","position":0,"duration":1}' \
+        | grep -i '^Location:' | tr -d '\r' | awk '{print $2}')
+    BLOB_ID=$(basename "$LOCATION")
+    if [ -z "$BLOB_ID" ]; then
+        echo "Failed to create a blob. Check your internet connection and try again."
         exit 1
     fi
-    echo "$BUCKET_ID" > "$BUCKET_FILE"
-    echo "Created bucket: $BUCKET_ID"
+    echo "$BLOB_ID" > "$BLOB_FILE"
+    echo "Created blob: $BLOB_ID"
 fi
 
-MUSIC_URL="https://kvdb.io/$BUCKET_ID/music.json"
+MUSIC_URL="https://jsonblob.com/api/jsonBlob/$BLOB_ID"
 
 # --- Write the push script ---
 cat > "$INSTALL_DIR/push_music.sh" <<SCRIPT_EOF
@@ -116,8 +120,10 @@ APPLESCRIPT_EOF
     JSON_CONTENT="{\\"status\\":\\"\$STATUS\\",\\"track\\":\\"\$TRACK\\",\\"artist\\":\\"\$ARTIST\\",\\"position\\":\$POS,\\"duration\\":\$DUR}"
     echo "\$JSON_CONTENT" > "$INSTALL_DIR/music.json"
 
-    # Write straight to kvdb.io — no auth, no token, no GitHub
-    curl -s -X PUT --data-raw "\$JSON_CONTENT" "\$MUSIC_URL" > /dev/null
+    # Write straight to jsonblob.com — no auth, no token, no GitHub
+    curl -s -X PUT "\$MUSIC_URL" \
+        -H "Content-Type: application/json" \
+        -d "\$JSON_CONTENT" > /dev/null
 
     sleep 10
 done
@@ -147,8 +153,8 @@ echo "To check status:   cat $INSTALL_DIR/music.json"
 echo "To stop it later:  pkill -f push_music.sh"
 echo ""
 echo "PASTE THIS EXACT SNIPPET into your executor (not just the loadstring"
-echo "alone) — the first line tells the overlay which bucket is yours:"
+echo "alone) — the first line tells the overlay which blob is yours:"
 echo ""
-echo "_G.SpotifyBucketId = \"$BUCKET_ID\""
+echo "_G.SpotifyBlobId = \"$BLOB_ID\""
 echo 'loadstring(game:HttpGet("https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"))()'
 echo "======================================================"

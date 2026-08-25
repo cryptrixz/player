@@ -1,4 +1,4 @@
---// :3
+--// :0
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
@@ -121,11 +121,10 @@ end
 
 -- FIXED: hardcode the real raw GitHub URL instead of the broken getfenv trick,
 -- which never worked because Roblox doesn't set script_url on getfenv(2).
-local musicUrl = "https://jsonblob.com/api/jsonBlob/" .. (_G.SpotifyBlobId or "SET_YOUR_BLOB_ID") .. "?t="
-
-if not _G.SpotifyBlobId then
-	warn("[SpotifyOverlay] No blob ID set! Set _G.SpotifyBlobId before running this script.")
-end
+-- Set this to your deployed Railway backend URL, e.g.
+-- "https://spotify-overlay-production.up.railway.app"
+local RAILWAY_URL = "PASTE_YOUR_RAILWAY_URL_HERE"
+local musicUrl = RAILWAY_URL .. "/music?t="
 
 while true do
 	local success, response = pcall(function()

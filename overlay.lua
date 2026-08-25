@@ -1,3 +1,4 @@
+--// :3
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
@@ -118,10 +119,12 @@ local function formatTime(seconds)
 	return string.format("%d:%02d", mins, secs)
 end
 
-local musicUrl = "https://kvdb.io/" .. (_G.SpotifyBucketId or "SET_YOUR_BUCKET_ID") .. "/music.json?t="
+-- FIXED: hardcode the real raw GitHub URL instead of the broken getfenv trick,
+-- which never worked because Roblox doesn't set script_url on getfenv(2).
+local musicUrl = "https://jsonblob.com/api/jsonBlob/" .. (_G.SpotifyBlobId or "SET_YOUR_BLOB_ID") .. "?t="
 
-if not _G.SpotifyBucketId then
-	warn("[SpotifyOverlay] No bucket ID set! Set _G.SpotifyBucketId before running this script.")
+if not _G.SpotifyBlobId then
+	warn("[SpotifyOverlay] No blob ID set! Set _G.SpotifyBlobId before running this script.")
 end
 
 while true do

@@ -3,7 +3,7 @@ set -e
 
 # ==== SET THIS after deploying the Railway backend ====
 # Example: https://spotify-overlay-production.up.railway.app
-RAILWAY_URL="https://player-production-7e33.up.railway.app/music"
+RAILWAY_URL="https://player-production-7e33.up.railway.app"
 # ========================================================
 
 INSTALL_DIR="$HOME/spotify-overlay"

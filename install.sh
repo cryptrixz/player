@@ -1,40 +1,30 @@
 #!/bin/bash
 set -e
 
-INSTALL_DIR="$HOME/spotify-overlay"
-BLOB_FILE="$HOME/.spotify_overlay_blob"
+# ==== SET THIS after deploying the Railway backend ====
+# Example: https://spotify-overlay-production.up.railway.app
+RAILWAY_URL="PASTE_YOUR_RAILWAY_URL_HERE"
+# ========================================================
 
-echo "== Spotify =="
+INSTALL_DIR="$HOME/spotify-overlay"
+
+if [ "$RAILWAY_URL" == "PASTE_YOUR_RAILWAY_URL_HERE" ]; then
+    echo "You need to edit this script first: set RAILWAY_URL to your deployed"
+    echo "Railway backend's public URL (Settings -> Networking -> Generate Domain)."
+    exit 1
+fi
+
+MUSIC_URL="${RAILWAY_URL%/}/music"
+
+echo "== Spotify Overlay Setup =="
 echo "This sets up a background script that publishes your Spotify status"
-echo "to a free, anonymous JSON storage blob so your Roblox overlay can read it."
-echo "No GitHub token, no git, no Xcode, no account of any kind required."
+echo "to your own Railway backend at:"
+echo "  $MUSIC_URL"
 echo ""
 
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# --- Create a fresh anonymous jsonblob.com blob (no login, no API key) ---
-if [ -f "$BLOB_FILE" ]; then
-    BLOB_ID=$(cat "$BLOB_FILE")
-    echo "Reusing existing blob: $BLOB_ID"
-else
-    echo "Creating a new anonymous JSON blob..."
-    LOCATION=$(curl -s -i -X POST "https://jsonblob.com/api/jsonBlob" \
-        -H "Content-Type: application/json" \
-        -d '{"status":"paused","track":"No Track Playing","artist":"","position":0,"duration":1}' \
-        | grep -i '^Location:' | tr -d '\r' | awk '{print $2}')
-    BLOB_ID=$(basename "$LOCATION")
-    if [ -z "$BLOB_ID" ]; then
-        echo "Failed to create a blob. Check your internet connection and try again."
-        exit 1
-    fi
-    echo "$BLOB_ID" > "$BLOB_FILE"
-    echo "Created blob: $BLOB_ID"
-fi
-
-MUSIC_URL="https://jsonblob.com/api/jsonBlob/$BLOB_ID"
-
-# --- Write the push script ---
 cat > "$INSTALL_DIR/push_music.sh" <<SCRIPT_EOF
 #!/bin/bash
 
@@ -120,8 +110,8 @@ APPLESCRIPT_EOF
     JSON_CONTENT="{\\"status\\":\\"\$STATUS\\",\\"track\\":\\"\$TRACK\\",\\"artist\\":\\"\$ARTIST\\",\\"position\\":\$POS,\\"duration\\":\$DUR}"
     echo "\$JSON_CONTENT" > "$INSTALL_DIR/music.json"
 
-    # Write straight to jsonblob.com — no auth, no token, no GitHub
-    curl -s -X PUT "\$MUSIC_URL" \
+    # POST straight to your own Railway backend
+    curl -s -X POST "\$MUSIC_URL" \
         -H "Content-Type: application/json" \
         -d "\$JSON_CONTENT" > /dev/null
 
@@ -134,10 +124,7 @@ chmod +x "$INSTALL_DIR/push_music.sh"
 pkill -f push_music.sh 2>/dev/null || true
 sleep 1
 
-echo ""
-echo "Installed to $INSTALL_DIR"
 echo "Starting the background updater now..."
-
 nohup "$INSTALL_DIR/push_music.sh" > "$INSTALL_DIR/push.log" 2>&1 &
 disown
 
@@ -146,15 +133,12 @@ echo ""
 echo "======================================================"
 echo "Done! Running in the background (PID $!)."
 echo ""
-echo "Your personal music data URL:"
-echo "  $MUSIC_URL"
-echo ""
 echo "To check status:   cat $INSTALL_DIR/music.json"
+echo "To check backend:  curl $MUSIC_URL"
 echo "To stop it later:  pkill -f push_music.sh"
 echo ""
-echo "PASTE THIS EXACT SNIPPET into your executor (not just the loadstring"
-echo "alone) — the first line tells the overlay which blob is yours:"
+echo "In Roblox, run this loadstring (no changes needed, since the URL"
+echo "is baked into overlay.lua once you set it there):"
 echo ""
-echo "_G.SpotifyBlobId = \"$BLOB_ID\""
 echo 'loadstring(game:HttpGet("https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"))()'
 echo "======================================================"

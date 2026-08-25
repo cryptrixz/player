@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const app = express();
 
 app.use(express.json());
@@ -17,24 +18,22 @@ const REDIRECT_URI = process.env.RAILWAY_URL
   ? `${process.env.RAILWAY_URL.replace(/\/$/, "")}/callback`
   : "http://localhost:3000/callback";
 
-let refreshToken = process.env.SPOTIFY_REFRESH_TOKEN || null;
-let accessToken = null;
-let accessTokenExpiresAt = 0;
+const users = {}; 
 
-let currentTrack = {
-  status: "paused",
-  track: "No Track Playing",
-  artist: "",
-  position: 0,
-  duration: 1,
-};
+function newUserId() {
+  return crypto.randomBytes(9).toString("base64url");
+}
+
+function emptyTrack() {
+  return { status: "paused", track: "No Track Playing", artist: "", position: 0, duration: 1, image: "" };
+}
 
 function basicAuthHeader() {
   return "Basic " + Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
 }
 
-async function refreshAccessToken() {
-  if (!refreshToken) return null;
+async function refreshAccessToken(user) {
+  if (!user.refreshToken) return null;
   const resp = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: {
@@ -43,81 +42,91 @@ async function refreshAccessToken() {
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",
-      refresh_token: refreshToken,
+      refresh_token: user.refreshToken,
     }),
   });
   const data = await resp.json();
   if (data.access_token) {
-    accessToken = data.access_token;
-    accessTokenExpiresAt = Date.now() + (data.expires_in - 30) * 1000;
-    if (data.refresh_token) refreshToken = data.refresh_token; // Spotify sometimes rotates it
+    user.accessToken = data.access_token;
+    user.accessTokenExpiresAt = Date.now() + (data.expires_in - 30) * 1000;
+    if (data.refresh_token) user.refreshToken = data.refresh_token;
   }
-  return accessToken;
+  return user.accessToken;
 }
 
-async function getValidAccessToken() {
-  if (accessToken && Date.now() < accessTokenExpiresAt) return accessToken;
-  return refreshAccessToken();
+async function getValidAccessToken(user) {
+  if (user.accessToken && Date.now() < user.accessTokenExpiresAt) return user.accessToken;
+  return refreshAccessToken(user);
 }
 
-async function pollSpotify() {
+async function pollUser(userId) {
+  const user = users[userId];
+  if (!user) return;
   try {
-    const token = await getValidAccessToken();
-    if (!token) return; // not authorized yet
+    const token = await getValidAccessToken(user);
+    if (!token) return;
 
     const resp = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
       headers: { Authorization: `Bearer ${token}` },
     });
 
     if (resp.status === 204) {
-      currentTrack = { status: "paused", track: "No Track Playing", artist: "", position: 0, duration: 1 };
+      user.currentTrack = emptyTrack();
       return;
     }
     if (!resp.ok) return;
 
     const data = await resp.json();
     if (!data || !data.item) {
-      currentTrack = { status: "paused", track: "No Track Playing", artist: "", position: 0, duration: 1 };
+      user.currentTrack = emptyTrack();
       return;
     }
 
-    currentTrack = {
+    const images = (data.item.album && data.item.album.images) || [];
+    const image = images.length ? images[0].url : "";
+
+    user.currentTrack = {
       status: data.is_playing ? "playing" : "paused",
       track: data.item.name,
       artist: data.item.artists.map((a) => a.name).join(", "),
       position: Math.floor((data.progress_ms || 0) / 1000),
       duration: Math.floor((data.item.duration_ms || 1000) / 1000),
+      image,
     };
   } catch (err) {
-    console.error("Spotify poll error:", err.message);
+    console.error(`Poll error for ${userId}:`, err.message);
   }
 }
 
-setInterval(pollSpotify, 5000);
+async function pollAllUsers() {
+  await Promise.all(Object.keys(users).map(pollUser));
+}
+setInterval(pollAllUsers, 5000);
 
 app.get("/", (req, res) => {
-  const authed = !!refreshToken;
   res.send(
-    authed
-      ? "Spotify overlay backend running. Authorized and polling Spotify."
-      : `Not authorized yet. <a href="/login">Click here to connect your Spotify account</a>.`
+    `Spotify overlay backend running. ${Object.keys(users).length} user(s) connected. ` +
+    `<a href="/login">Click here to connect your own Spotify account</a>.`
   );
 });
 
 app.get("/login", (req, res) => {
-  const scope = "user-read-currently-playing user-read-playback-state";
+  const userId = newUserId();
+  const scope = "user-read-currently-playing user-read-playback-state user-modify-playback-state";
   const params = new URLSearchParams({
     response_type: "code",
     client_id: CLIENT_ID,
     scope,
     redirect_uri: REDIRECT_URI,
+    state: userId,
   });
   res.redirect("https://accounts.spotify.com/authorize?" + params.toString());
 });
 
 app.get("/callback", async (req, res) => {
   const code = req.query.code;
-  if (!code) return res.status(400).send("Missing code");
+  const userId = req.query.state;
+  if (!code || !userId) return res.status(400).send("Missing code or state");
 
   try {
     const resp = await fetch("https://accounts.spotify.com/api/token", {
@@ -138,50 +147,81 @@ app.get("/callback", async (req, res) => {
       return res.status(400).send("Auth failed: " + JSON.stringify(data));
     }
 
-    refreshToken = data.refresh_token;
-    accessToken = data.access_token;
-    accessTokenExpiresAt = Date.now() + (data.expires_in - 30) * 1000;
+    users[userId] = {
+      refreshToken: data.refresh_token,
+      accessToken: data.access_token,
+      accessTokenExpiresAt: Date.now() + (data.expires_in - 30) * 1000,
+      currentTrack: emptyTrack(),
+    };
 
-    console.log("=== SAVE THIS AS SPOTIFY_REFRESH_TOKEN env var for persistence ===");
-    console.log(refreshToken);
-    console.log("====================================================================");
+    pollUser(userId);
 
-    pollSpotify();
+    const railwayBase = process.env.RAILWAY_URL
+      ? process.env.RAILWAY_URL.replace(/\/$/, "")
+      : REDIRECT_URI.replace("/callback", "");
 
-    res.send(
-      "Connected! Your Spotify status will now show in the overlay. " +
-      "IMPORTANT: check your Railway logs, copy the refresh token printed there, " +
-      "and save it as an SPOTIFY_REFRESH_TOKEN environment variable so this survives restarts. " +
-      "You can close this tab."
-    );
+    res.send(`
+      <html><body style="font-family: monospace; padding: 24px; line-height: 1.6;">
+        <h2>Connected!</h2>
+        <p>Your personal ID: <b>${userId}</b></p>
+        <p>Paste this exact snippet into your executor:</p>
+        <pre style="background:#eee; padding:12px;">_G.SpotifyUserId = "${userId}"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"))()</pre>
+        <p>To check your status anytime from Terminal:</p>
+        <pre style="background:#eee; padding:12px;">curl "${railwayBase}/music?id=${userId}"</pre>
+        <p>Save your ID somewhere — you'll need it every time. You can close this tab.</p>
+      </body></html>
+    `);
   } catch (err) {
     res.status(500).send("Error: " + err.message);
   }
 });
 
 app.get("/music", (req, res) => {
-  res.json(currentTrack);
+  const userId = req.query.id;
+  const user = users[userId];
+  if (!user) return res.json(emptyTrack());
+  res.json(user.currentTrack);
 });
 
-app.post("/music", (req, res) => {
-  const { status, track, artist, position, duration } = req.body || {};
-  currentTrack = {
-    status: typeof status === "string" ? status : "paused",
-    track: typeof track === "string" ? track : "No Track Playing",
-    artist: typeof artist === "string" ? artist : "",
-    position: typeof position === "number" ? position : 0,
-    duration: typeof duration === "number" ? duration : 1,
+async function controlAction(userId, action) {
+  const user = users[userId];
+  if (!user) throw new Error("Unknown user");
+  const token = await getValidAccessToken(user);
+  if (!token) throw new Error("Not authorized");
+
+  const endpoints = {
+    play: { method: "PUT", url: "https://api.spotify.com/v1/me/player/play" },
+    pause: { method: "PUT", url: "https://api.spotify.com/v1/me/player/pause" },
+    next: { method: "POST", url: "https://api.spotify.com/v1/me/player/next" },
+    previous: { method: "POST", url: "https://api.spotify.com/v1/me/player/previous" },
   };
-  res.json({ ok: true, currentTrack });
+  const ep = endpoints[action];
+  if (!ep) throw new Error("Unknown action");
+
+  const resp = await fetch(ep.url, {
+    method: ep.method,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return resp.status;
+}
+
+app.post("/control/:action", async (req, res) => {
+  const userId = req.query.id;
+  const { action } = req.params;
+  try {
+    const status = await controlAction(userId, action);
+    if (status === 404) {
+      return res.status(404).json({ ok: false, error: "No active Spotify device found. Open Spotify somewhere first." });
+    }
+    res.json({ ok: true });
+    pollUser(userId); 
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Spotify overlay backend listening on port ${PORT}`);
-  if (refreshToken) {
-    console.log("Found saved refresh token, starting to poll immediately.");
-    pollSpotify();
-  } else {
-    console.log(`No refresh token yet. Visit ${REDIRECT_URI.replace("/callback", "/login")} to connect.`);
-  }
 });

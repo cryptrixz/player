@@ -8,7 +8,7 @@ RAILWAY_URL="https://player-production-7e33.up.railway.app"
 
 INSTALL_DIR="$HOME/spotify-overlay"
 
-if [ "$RAILWAY_URL" == "PASTE_YOUR_RAILWAY_URL_HERE" ]; then
+if [ "$RAILWAY_URL" == "https://player-production-7e33.up.railway.app" ]; then
     echo "You need to edit this script first: set RAILWAY_URL to your deployed"
     echo "Railway backend's public URL (Settings -> Networking -> Generate Domain)."
     exit 1

@@ -1,4 +1,3 @@
---// :33
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -13,14 +12,8 @@ if oldOverlay then
 	oldOverlay:Destroy()
 end
 
-local USER_ID = _G.SpotifyUserId
-if not USER_ID then
-	warn("[SpotifyOverlay] Set _G.SpotifyUserId before running this script! Visit the /login link to get your ID.")
-	USER_ID = "NO_ID_SET"
-end
-
 local RAILWAY_URL = "https://player-production-7e33.up.railway.app"
-local musicUrl = RAILWAY_URL .. "/music?id=" .. USER_ID
+local musicUrl = RAILWAY_URL .. "/music"
 local controlUrl = RAILWAY_URL .. "/control/"
 
 local screenGui = Instance.new("ScreenGui")
@@ -28,7 +21,6 @@ screenGui.Name = "SpotifyOverlay"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
--- === Liquid glass panel (slightly darker) ===
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 450, 0, 80)
@@ -89,6 +81,7 @@ trackLabel.TextTruncate = Enum.TextTruncate.AtEnd
 trackLabel.Text = "Connecting..."
 trackLabel.Parent = mainFrame
 
+-- Artist sits right under the track name, no separator character between them
 local artistLabel = Instance.new("TextLabel")
 artistLabel.Name = "ArtistLabel"
 artistLabel.Size = UDim2.new(0, 240, 0, 16)
@@ -256,7 +249,7 @@ local function sendControl(action)
 	task.spawn(function()
 		pcall(function()
 			customRequest({
-				Url = controlUrl .. action .. "?id=" .. USER_ID,
+				Url = controlUrl .. action,
 				Method = "POST",
 			})
 		end)
@@ -319,7 +312,7 @@ task.spawn(function()
 	while screenGui and screenGui.Parent do
 		local success, response = pcall(function()
 			return customRequest({
-				Url = musicUrl .. "&t=" .. os.time(),
+				Url = musicUrl .. "?t=" .. os.time(),
 				Method = "GET",
 			})
 		end)

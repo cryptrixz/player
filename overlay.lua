@@ -123,7 +123,7 @@ end
 -- which never worked because Roblox doesn't set script_url on getfenv(2).
 -- Set this to your deployed Railway backend URL, e.g.
 -- "https://spotify-overlay-production.up.railway.app"
-local RAILWAY_URL = "PASTE_YOUR_RAILWAY_URL_HERE"
+local RAILWAY_URL = "https://player-production-7e33.up.railway.app"
 local musicUrl = RAILWAY_URL .. "/music?t="
 
 while true do

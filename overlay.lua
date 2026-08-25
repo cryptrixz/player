@@ -1,4 +1,4 @@
-local TweenService = game:GetService("TweenService") 
+local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -118,7 +118,11 @@ local function formatTime(seconds)
 	return string.format("%d:%02d", mins, secs)
 end
 
-local musicUrl = "https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/music.json?t="
+local musicUrl = "https://kvdb.io/" .. (_G.SpotifyBucketId or "SET_YOUR_BUCKET_ID") .. "/music.json?t="
+
+if not _G.SpotifyBucketId then
+	warn("[SpotifyOverlay] No bucket ID set! Set _G.SpotifyBucketId before running this script.")
+end
 
 while true do
 	local success, response = pcall(function()
@@ -155,5 +159,5 @@ while true do
 		progressBarFill.Size = UDim2.new(0, 0, 1, 0)
 	end
 	
-	task.wait(5)
+	task.wait(10)
 end

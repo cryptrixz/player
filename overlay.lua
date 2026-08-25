@@ -111,22 +111,23 @@ timeTotal.Text = "0:00"
 timeTotal.Parent = mainFrame
 
 local httpService = game:GetService("HttpService")
-local customRequest = syn and syn.request or http_request or request or (http and http.request)
+local customRequest = customRequest or http_request or request or (syn and syn.request) or (http and http.request)
 
 local function formatTime(seconds)
+	if not seconds then return "0:00" end
 	local mins = math.floor(seconds / 60)
 	local secs = seconds % 60
 	return string.format("%d:%02d", mins, secs)
 end
 
--- FIXED: hardcode the real raw GitHub URL instead of the broken getfenv trick,
--- which never worked because Roblox doesn't set script_url on getfenv(2).
--- Set this to your deployed Railway backend URL, e.g.
--- "https://spotify-overlay-production.up.railway.app"
 local RAILWAY_URL = "https://player-production-7e33.up.railway.app"
 local musicUrl = RAILWAY_URL .. "/music?t="
 
+print("[SpotifyOverlay] Script initialized. URL targeted:", musicUrl)
+
 while true do
+	print("[SpotifyOverlay] Dispatching network request...")
+	
 	local success, response = pcall(function()
 		return customRequest({
 			Url = musicUrl .. os.time(),
@@ -134,27 +135,49 @@ while true do
 		})
 	end)
 	
-	if success and response and response.Body then
-		local jsonSuccess, result = pcall(function()
-			return httpService:JSONDecode(response.Body)
-		end)
+	if success and response then
+		print("[SpotifyOverlay] Network HTTP status code received:", response.StatusCode or "Unknown")
 		
-		if jsonSuccess and result then
-			trackLabel.Text = result.track
-			artistLabel.Text = result.artist
-			timeCurrent.Text = formatTime(result.position)
-			timeTotal.Text = formatTime(result.duration)
+		if response.Body then
+			print("[SpotifyOverlay] Raw payload body content:", tostring(response.Body))
 			
-			local percentage = math.clamp(result.position / result.duration, 0, 1)
-			TweenService:Create(progressBarFill, TweenInfo.new(1, Enum.EasingStyle.Linear), {
-				Size = UDim2.new(percentage, 0, 1, 0)
-			}):Play()
+			local jsonSuccess, result = pcall(function()
+				return httpService:JSONDecode(response.Body)
+			end)
+			
+			if jsonSuccess and result then
+				print("[SpotifyOverlay] JSON parsing succeeded.")
+				
+				-- Defensive checks for table keys
+				local track = result.track or "Unknown Track"
+				local artist = result.artist or "Unknown Artist"
+				local position = tonumber(result.position) or 0
+				local duration = tonumber(result.duration) or 1
+				
+				print(string.format("[SpotifyOverlay] Parsed track data -> Track: %s | Artist: %s | Pos: %s | Dur: %s", track, artist, tostring(position), tostring(duration)))
+				
+				trackLabel.Text = track
+				artistLabel.Text = artist
+				timeCurrent.Text = formatTime(position)
+				timeTotal.Text = formatTime(duration)
+				
+				local percentage = math.clamp(position / duration, 0, 1)
+				TweenService:Create(progressBarFill, TweenInfo.new(1, Enum.EasingStyle.Linear), {
+					Size = UDim2.new(percentage, 0, 1, 0)
+				}):Play()
+			else
+				warn("[SpotifyOverlay] JSON parsing failed! Error description:", tostring(result))
+				trackLabel.Text = "Offline (JSON Error)"
+				artistLabel.Text = ""
+			end
 		else
-			trackLabel.Text = "Offline"
+			warn("[SpotifyOverlay] Request body payload returned completely blank/nil.")
+			trackLabel.Text = "Offline (No Body)"
 			artistLabel.Text = ""
 		end
 	else
-		trackLabel.Text = "Offline"
+		warn("[SpotifyOverlay] Network execution pcall failed! Error stack:", tostring(response))
+		trackLabel.Text = "Offline (Net Error)"
 		artistLabel.Text = ""
 		timeCurrent.Text = "0:00"
 		timeTotal.Text = "0:00"

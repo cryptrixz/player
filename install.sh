@@ -7,7 +7,6 @@ C_RED="\033[31m"
 C_YELLOW="\033[33m"
 C_CYAN="\033[36m"
 C_GRAY="\033[90m"
-
 get_time() {
     local s=""
     local mot="kitty123"
@@ -18,14 +17,11 @@ get_time() {
     s+="${C_RESET}"
     printf "%b" "${s}${C_GRAY}::${C_RESET}${C_GREEN}[$(date +%H:%M:%S)]${C_RESET}"
 }
-
 log() { printf "%b %b\n" "$(get_time)" "$1"; }
-
 die() {
     spinner_stop "fail" "$1"
     exit 1
 }
-
 banner() {
     local line="────────────────────────────────────────────"
     echo ""
@@ -34,11 +30,9 @@ banner() {
     printf "${C_GRAY}%s${C_RESET}\n" "$line"
     echo ""
 }
-
 SPIN_FRAMES=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
 SPINNER_PID=""
 SPINNER_MSG=""
-
 spinner_start() {
     SPINNER_MSG="$1"
     printf "\033[?25l\033[?7l"
@@ -54,7 +48,6 @@ spinner_start() {
     SPINNER_PID=$!
     disown "$SPINNER_PID" 2>/dev/null || true
 }
-
 spinner_stop() {
     local status="${1:-ok}"
     local msg="${2:-$SPINNER_MSG}"
@@ -72,27 +65,48 @@ spinner_stop() {
     esac
     printf "\033[?7h\033[?25h"
 }
-
 cleanup() {
     [[ -n "$SPINNER_PID" ]] && kill "$SPINNER_PID" 2>/dev/null
     printf "\033[?7h\033[?25h"
 }
 trap cleanup EXIT INT TERM
-
 banner
-
 spinner_start "stopping old processes..."
 pkill -f "electron" 2>/dev/null || true
 sleep 0.7
 spinner_stop ok "old processes stopped"
-
 INSTALL_DIR="$HOME/spotify-overlay-app"
 spinner_start "cleaning previous install..."
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
-rm -f "$INSTALL_DIR/username.txt"
 spinner_stop ok "clean"
+
+echo ""
+printf "  ${C_CYAN}1.${C_RESET} Open this link in your browser:\n"
+echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative"
+echo ""
+printf "  ${C_CYAN}2.${C_RESET} Paste the CODE you get and press Enter: "
+read -r CODE
+CODE=$(echo "$CODE" | tr -d '[:space:]')
+if [[ -z "$CODE" ]]; then
+    die "no code given"
+fi
+
+spinner_start "connecting to Spotify..."
+RESPONSE=$(curl -s -X POST "https://accounts.spotify.com/api/token" \
+  -H "Authorization: Basic $(echo -n '4119f479e60d4a049e3d384ec366dc65:d7a0a39742f24c228af25e0b0ef56ef7' | base64)" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "code=$CODE" \
+  -d "redirect_uri=https://cryptrixz.github.io/player/callback.html")
+
+REFRESH=$(echo "$RESPONSE" | grep -o '"refresh_token":"[^"]*"' | cut -d'"' -f4)
+if [[ -z "$REFRESH" ]]; then
+    die "failed to get refresh token - try again"
+fi
+echo "$REFRESH" > "$INSTALL_DIR/token.txt"
+spinner_stop ok "connected permanently"
 
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
@@ -106,7 +120,6 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 }
 PKGEOF
 spinner_stop ok "package.json written"
-
 spinner_start "writing app.js..."
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
 const { app, BrowserWindow, screen, ipcMain, Tray, Menu } = require('electron');
@@ -114,51 +127,36 @@ const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
 const fetch = require('node-fetch');
-
 let win;
 let tray = null;
 let accessToken = null;
 let tokenExpires = 0;
-
 const CLIENT_ID = "4119f479e60d4a049e3d384ec366dc65";
 const CLIENT_SECRET = "d7a0a39742f24c228af25e0b0ef56ef7";
-const USERNAME_PATH = path.join(__dirname, 'username.txt');
-
-function getUsername() {
-    try {
-        if (fs.existsSync(USERNAME_PATH)) {
-            const u = fs.readFileSync(USERNAME_PATH, 'utf8').trim();
-            if (u.length > 0) return u;
-        }
-    } catch (e) {}
-    return null;
-}
-
-function saveUsername(name) {
-    fs.writeFileSync(USERNAME_PATH, name.trim());
-}
-
+const TOKEN_PATH = path.join(__dirname, 'token.txt');
 async function getToken() {
     if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
     try {
+        const refresh = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+        if (!refresh) return null;
         const res = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64')
             },
-            body: 'grant_type=client_credentials'
+            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(refresh)
         });
         const data = await res.json();
         if (data.access_token) {
             accessToken = data.access_token;
             tokenExpires = Date.now() + (data.expires_in * 1000);
+            if (data.refresh_token) fs.writeFileSync(TOKEN_PATH, data.refresh_token);
             return accessToken;
         }
     } catch (e) {}
     return null;
 }
-
 async function spotifyGet(endpoint) {
     const token = await getToken();
     if (!token) return null;
@@ -168,9 +166,7 @@ async function spotifyGet(endpoint) {
     if (!res.ok) return null;
     return res.json();
 }
-
 function playUriQuiet(uri) {
-    // Best effort to keep the current app (Roblox) in front
     const script = `
         tell application "System Events"
             set frontApp to name of first application process whose frontmost is true
@@ -178,13 +174,13 @@ function playUriQuiet(uri) {
         tell application "Spotify"
             play track "${uri}"
         end tell
-        delay 0.25
+        delay 0.15
         tell application "System Events"
             try
                 set frontmost of process frontApp to true
             end try
         end tell
-        delay 0.2
+        delay 0.15
         tell application "System Events"
             try
                 set frontmost of process frontApp to true
@@ -193,7 +189,6 @@ function playUriQuiet(uri) {
     `;
     exec(`osascript -e '${script}'`);
 }
-
 function createOverlayWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
     win = new BrowserWindow({
@@ -209,7 +204,6 @@ function createOverlayWindow() {
     win.loadFile(path.join(__dirname, 'overlay.html'));
     startAutomationLoops();
 }
-
 function createTrayMenu() {
     tray = new Tray(path.join(__dirname, 'icon.png'));
     const contextMenu = Menu.buildFromTemplate([
@@ -220,7 +214,6 @@ function createTrayMenu() {
     ]);
     tray.setContextMenu(contextMenu);
 }
-
 function startAutomationLoops() {
     setInterval(() => {
         if (!win || win.isDestroyed()) return;
@@ -232,7 +225,6 @@ function startAutomationLoops() {
             else { if (win.isVisible()) win.hide(); }
         });
     }, 250);
-
     setInterval(() => {
         if (!win || win.isDestroyed() || !win.isVisible()) return;
         const appleScript = `
@@ -278,7 +270,6 @@ function startAutomationLoops() {
         });
     }, 250);
 }
-
 ipcMain.on('spotify-control', async (event, data) => {
     if (['playpause','next','prev','scrub'].includes(data.action)) {
         let script = '';
@@ -289,27 +280,14 @@ ipcMain.on('spotify-control', async (event, data) => {
         if (script) exec(`osascript -e '${script}'`);
         return;
     }
-
     if (data.action === 'playUri' || data.action === 'playPlaylist') {
         playUriQuiet(data.value);
         return;
     }
-
-    if (data.action === 'saveUsername') {
-        saveUsername(data.value);
-        win.webContents.send('username-saved', data.value);
-        return;
-    }
-
     if (data.action === 'getRealPlaylists') {
-        const username = getUsername();
-        if (!username) {
-            win.webContents.send('need-username');
-            return;
-        }
         try {
             let all = [];
-            let url = `/users/${encodeURIComponent(username)}/playlists?limit=50`;
+            let url = '/me/playlists?limit=50';
             while (url) {
                 const res = await spotifyGet(url);
                 if (!res || !res.items) break;
@@ -327,7 +305,6 @@ ipcMain.on('spotify-control', async (event, data) => {
         }
         return;
     }
-
     if (data.action === 'getPlaylistTracks') {
         try {
             let playlistId = data.value;
@@ -351,7 +328,6 @@ ipcMain.on('spotify-control', async (event, data) => {
         }
         return;
     }
-
     if (data.action === 'search') {
         try {
             const q = encodeURIComponent(data.value);
@@ -373,7 +349,6 @@ ipcMain.on('spotify-control', async (event, data) => {
         return;
     }
 });
-
 ipcMain.on('resize-window', (event, bounds) => {
     if (!win || win.isDestroyed()) return;
     const { width: scrW, height: scrH } = screen.getPrimaryDisplay().workAreaSize;
@@ -382,7 +357,6 @@ ipcMain.on('resize-window', (event, bounds) => {
         x: Math.floor((scrW - bounds.width) / 2), y: scrH - Math.floor(bounds.height) - 20
     }, true);
 });
-
 app.whenReady().then(() => {
     createOverlayWindow();
     createTrayMenu();
@@ -391,7 +365,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 APPEOF
 spinner_stop ok "app.js written"
-
 spinner_start "writing preload.js..."
 cat > "$INSTALL_DIR/preload.js" << 'PREEOF'
 const { contextBridge, ipcRenderer } = require('electron');
@@ -400,17 +373,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onPlaylistsReply: (callback) => ipcRenderer.on('playlists-reply', (_event, value) => callback(value)),
     onTracksReply: (callback) => ipcRenderer.on('tracks-reply', (_event, value) => callback(value)),
     onSearchReply: (callback) => ipcRenderer.on('search-reply', (_event, value) => callback(value)),
-    onNeedUsername: (callback) => ipcRenderer.on('need-username', () => callback()),
-    onUsernameSaved: (callback) => ipcRenderer.on('username-saved', (_event, value) => callback(value)),
     sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
 PREEOF
 spinner_stop ok "preload.js written"
-
 spinner_start "writing icon + overlay.html..."
 echo "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAWklEQVQ4y2P4//8/AyUYGegETGg0gGgD0M0gWh9WDRDVAHQzSDYAXQ0w1gB0M8g2AN0MMNYAdDPINgDdDLL1YdUAUQ0g2gB0M4jWh1UDRDWAaAPQzSBaH8wAALw9GBl7N9GNAAAAAElFTkSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
-
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -455,11 +424,6 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .play-btn{-webkit-app-region:no-drag;color:rgb(30,215,96);font-size:14px;font-weight:bold;padding:4px 8px;cursor:pointer;border-radius:4px;flex-shrink:0}
 .play-btn:hover{background:rgba(30,215,96,.15)}
 .search-hint{color:rgba(255,255,255,.4);font-size:11px;text-align:center;padding:20px 10px}
-.username-box{display:flex;flex-direction:column;gap:8px;padding:10px 0}
-.username-box input{width:100%;padding:8px 12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;outline:none;font-size:12px}
-.username-box button{padding:8px;background:#1DB954;border:none;border-radius:8px;color:#fff;font-weight:600;font-size:12px;cursor:pointer}
-.username-box button:hover{background:#1ed760}
-.connected{color:rgba(255,255,255,.5);font-size:11px;margin-bottom:8px;text-align:center}
 </style>
 </head>
 <body>
@@ -494,7 +458,6 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
     <div class="tab" id="tabSearch">Search</div>
   </div>
   <div class="back-btn" id="backBtn">&lt; Back to Playlists</div>
-  <div id="connectedLabel" class="connected" style="display:none"></div>
   <div class="list-container" id="listContainer"></div>
 </div>
 <canvas id="colorCanvas" style="display:none;" width="10" height="10"></canvas>
@@ -502,7 +465,6 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false,viewingPlaylist=false;
 let recentTracksMemory=[],loadedPlaylistsMemory=[],currentGradient="linear-gradient(180deg,#78b4ff,#4a90e2,#2a6fd6)";
 const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
-
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function updateWaveColors(r,g,b){
     const r2=Math.min(255,r+40),g2=Math.min(255,g+30),b2=Math.min(255,b+50);
@@ -543,36 +505,11 @@ function updateWindowBounds(){
     document.getElementById("extendedDrawer").style.width=`${Math.floor(450*baseScale)}px`;
     window.electronAPI.resizeWindow({width:targetW,height:targetH});
 }
-function showUsernamePrompt(){
-    document.getElementById("connectedLabel").style.display="none";
-    const container=document.getElementById("listContainer");
-    container.innerHTML=`
-        <div class="username-box">
-            <div style="color:#fff;font-size:13px;margin-bottom:4px;font-weight:600">Enter your Spotify username</div>
-            <div style="color:rgba(255,255,255,.45);font-size:11px;margin-bottom:8px">This is the name in your Spotify profile URL</div>
-            <input type="text" id="usernameInput" placeholder="e.g. johndoe" autofocus />
-            <button id="saveUsernameBtn">Save & Load Playlists</button>
-        </div>
-    `;
-    const input = document.getElementById('usernameInput');
-    const btn = document.getElementById('saveUsernameBtn');
-    btn.addEventListener('click',()=>{
-        const val=input.value.trim();
-        if(val) window.electronAPI.sendControl('saveUsername',val);
-    });
-    input.addEventListener('keydown',e=>{
-        if(e.key==='Enter'){
-            const val=input.value.trim();
-            if(val) window.electronAPI.sendControl('saveUsername',val);
-        }
-    });
-    setTimeout(()=>input.focus(),100);
-}
 function populateList(items){
     const container=document.getElementById("listContainer");
     container.innerHTML="";
     if(!items||items.length===0){
-        container.innerHTML=`<div class="search-hint">No public playlists found<br><br>Only public playlists appear.<br>Make one playlist public or check the username.</div>`;
+        container.innerHTML=`<div class="search-hint">No playlists found</div>`;
         return;
     }
     items.forEach(item=>{
@@ -590,7 +527,6 @@ function populateList(items){
         container.appendChild(row);
     });
 }
-
 document.getElementById('backBtn').addEventListener('click',()=>{viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';populateList(loadedPlaylistsMemory)});
 document.getElementById('islandWaves').addEventListener('click',()=>{
     drawerOpen=!drawerOpen;const dr=document.getElementById("extendedDrawer");
@@ -600,7 +536,6 @@ document.getElementById('islandWaves').addEventListener('click',()=>{
 });
 document.getElementById('art').addEventListener('click',()=>{baseScale=baseScale===1.0?1.25:(baseScale===1.25?0.85:1.0);updateWindowBounds()});
 document.getElementById('artPh').addEventListener('click',()=>{baseScale=baseScale===1.0?1.25:(baseScale===1.25?0.85:1.0);updateWindowBounds()});
-
 document.getElementById('tabPlaylists').addEventListener('click',e=>{
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
     viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
@@ -609,30 +544,20 @@ document.getElementById('tabPlaylists').addEventListener('click',e=>{
 document.getElementById('tabRecents').addEventListener('click',e=>{
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
     viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
-    document.getElementById("connectedLabel").style.display="none";
     populateList(recentTracksMemory);
 });
 document.getElementById('tabSearch').addEventListener('click',e=>{
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
     viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
-    document.getElementById("connectedLabel").style.display="none";
     document.getElementById('listContainer').innerHTML=`<div class="search-hint">Type a song or artist and press Enter</div>`;
     document.getElementById('searchBox').focus();
 });
-
 window.electronAPI.onPlaylistsReply(playlists=>{
     loadedPlaylistsMemory=playlists;
     if(document.getElementById('tabPlaylists').classList.contains('active')&&!viewingPlaylist)populateList(playlists);
 });
 window.electronAPI.onTracksReply(tracks=>{if(viewingPlaylist)populateList(tracks)});
 window.electronAPI.onSearchReply(tracks=>{populateList(tracks)});
-window.electronAPI.onNeedUsername(()=>{showUsernamePrompt()});
-window.electronAPI.onUsernameSaved((name)=>{
-    document.getElementById("connectedLabel").style.display="block";
-    document.getElementById("connectedLabel").textContent="Connected to: " + name;
-    window.electronAPI.sendControl('getRealPlaylists');
-});
-
 document.getElementById('searchBox').addEventListener('keydown',e=>{
     if(e.key==='Enter'&&e.target.value.trim()){
         window.electronAPI.sendControl('search',e.target.value);
@@ -640,7 +565,6 @@ document.getElementById('searchBox').addEventListener('keydown',e=>{
         document.getElementById('tabSearch').classList.add('active');
     }
 });
-
 document.getElementById('btnPrev').addEventListener('click',()=>window.electronAPI.sendControl('prev'));
 document.getElementById('btnPP').addEventListener('click',()=>window.electronAPI.sendControl('playpause'));
 document.getElementById('btnNext').addEventListener('click',()=>window.electronAPI.sendControl('next'));
@@ -652,7 +576,6 @@ document.getElementById('progressBg').addEventListener('click',e=>{
     pos=targetSeconds;paint();
     window.electronAPI.sendControl('scrub',targetSeconds);
 });
-
 window.electronAPI.onSpotifyData(d=>{
     document.getElementById("track").textContent=d.track||"Spotify";
     document.getElementById("artist").textContent=d.artist||"No track playing";
@@ -667,7 +590,6 @@ window.electronAPI.onSpotifyData(d=>{
         if(recentTracksMemory.length>20)recentTracksMemory.pop();
     }
 });
-
 setInterval(()=>{if(playing&&pos<total){pos=Math.min(total,pos+0.1);paint()}},100);
 const bars=document.querySelectorAll('.wave-bar');
 setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Math.random()*18)+4)+'px'}else{bar.style.height='5px'}bar.style.background=currentGradient})},140);
@@ -676,23 +598,20 @@ setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Mat
 </html>
 HTMLEOF
 spinner_stop ok "overlay.html written"
-
 spinner_start "installing dependencies..."
 npm install --silent 2>/dev/null || npm install
 xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
 codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
 spinner_stop ok "dependencies installed"
-
 spinner_start "launching kitty123..."
 sleep 1
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
 sleep 1
 spinner_stop ok "kitty123 launched"
-
 echo ""
 printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
 echo ""
 log "Open the drawer (click the waves) → Playlists"
-log "You will see the username box"
+log "Connected permanently (token saved)"
 echo ""

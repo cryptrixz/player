@@ -165,15 +165,15 @@ cat > "$OVERLAY_HTML" << 'HTMLEOF'
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;background-color:rgba(0,0,0,0) !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
 body{display:flex;align-items:center;justify-content:center}
-.shell{-webkit-app-region:drag;cursor:move;width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
-.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
+.shell{width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
+.art{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
 .artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row{display:flex;align-items:center;gap:8px;margin-top:8px}
-.btns{-webkit-app-region:no-drag;display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700;cursor:pointer}
-.progress-wrap{-webkit-app-region:no-drag;flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.btns{display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700}
+.progress-wrap{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative}
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff}
 .dot{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;margin-left:-6px;border-radius:50%;background:#fff;left:0%}
@@ -230,11 +230,12 @@ const path = require('path');
 
 function createOverlayWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
     const win = new BrowserWindow({
         width: 480,
         height: 110,
         x: Math.floor((width - 480) / 2),
-        y: height - 120,
+        y: height - 130,
         frame: false,
         transparent: true,
         alwaysOnTop: true,
@@ -250,11 +251,13 @@ function createOverlayWindow() {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setAlwaysOnTop(true, 'screen-saver', 1);
     win.setIgnoreMouseEvents(true, { forward: true });
+
     win.loadFile(path.join(__dirname, 'overlay.html'));
 }
 
 app.whenReady().then(() => {
     createOverlayWindow();
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createOverlayWindow();
     });
@@ -273,7 +276,7 @@ if [ ! -d "node_modules" ]; then
   npm install --silent
 fi
 nohup npm start > /dev/null 2>&1 &
-echo "Overlay window opened via Electron wrapper."
+echo "Overlay window opened."
 START
 chmod +x "$INSTALL_DIR/start-overlay.sh"
 

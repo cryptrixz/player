@@ -1,41 +1,69 @@
 #!/bin/bash
-set -e
 
-BLUE='\033[38;5;33m'
-DARKBLUE='\033[38;5;24m'
-BOLD='\033[1m'
-RESET='\033[0m'
+set -euo pipefail
+
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_GREEN="\033[32m"
+C_RED="\033[31m"
+C_BLUE="\033[34m"
+C_CYAN="\033[36m"
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
+NODE_VERSION="v20.17.0"
 
-echo -e "${DARKBLUE}┌─────────────────────────────────────┐${RESET}"
-echo -e "${DARKBLUE}│${RESET}  ${BOLD}${BLUE}kitty123 Installer${RESET}                  ${DARKBLUE}│${RESET}"
-echo -e "${DARKBLUE}└─────────────────────────────────────┘${RESET}"
+get_time() {
+    printf "%b" "${C_BLUE}kitty123${C_RESET}::${C_GREEN}[$(date +%H:%M:%S)]${C_RESET}"
+}
+
+log() {
+    printf "%b %b\n" "$(get_time)" "$1"
+}
+
+die() {
+    printf "%b ${C_RED}Error:${C_RESET} %b\n" "$(get_time)" "$1"
+    exit 1
+}
+
+detect_arch() {
+    local arch
+    arch=$(uname -m)
+    if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" == "1" ]]; then
+        arch="arm64"
+    fi
+    echo "$arch"
+}
+
+clear
+echo -e "${C_BOLD}${C_BLUE}kitty123 Universal Spotify Overlay Installer${C_RESET}"
 echo ""
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] Setting up Spotify overlay..."
-echo ""
+
+ARCH=$(detect_arch)
+log "System Architecture: ${C_BOLD}${ARCH}${C_RESET}"
 
 if ! command -v node &> /dev/null; then
-    echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] Node.js not found, downloading installer..."
-    ARCH=$(uname -m)
-    if [ "$ARCH" == "arm64" ]; then
-        NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0.pkg"
+    log "Node.js environment missing. Downloading package installer..."
+    if [[ "$ARCH" == "arm64" ]]; then
+        NODE_URL="https://nodejs.org{NODE_VERSION}/node-${NODE_VERSION}.pkg"
     else
-        NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0-x64.pkg"
+        NODE_URL="https://nodejs.org{NODE_VERSION}/node-${NODE_VERSION}-x64.pkg"
     fi
+    
     curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
-    echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] admin access required — enter your mac password if asked"
+    log "${C_CYAN}Admin elevation required to attach runtime packages.${C_RESET}"
     sudo installer -pkg /tmp/node-installer.pkg -target /
     rm /tmp/node-installer.pkg
     export PATH="/usr/local/bin:$PATH"
 fi
 
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] node.js ready: $(node --version)"
+log "Node.js runtime active: $(node --version)"
 
+pkill -f "electron" 2>/dev/null || true
+rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] writing app files..."
+log "Writing local configuration manifests..."
 
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 {
@@ -133,7 +161,7 @@ body{display:flex;align-items:center;justify-content:center}
   </div>
 </div>
 <script>
-const HOST="https://player-production-7e33.up.railway.app";
+const HOST="https://railway.app";
 const API=HOST+"/music";
 let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
@@ -147,25 +175,19 @@ setInterval(poll,1000);setInterval(()=>{if(playing&&total>1){pos=Math.min(total,
 </html>
 HTMLEOF
 
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] installing dependencies..."
+log "Installing package dependencies via npm..."
 npm install --silent
 
-echo ""
-echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] setup complete, launching overlay..."
-echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"
+log "Removing gatekeeper quarantine extensions and authorizing deep local code signatures..."
+xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
+codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
 
-pkill -f "electron $INSTALL_DIR" 2>/dev/null || true
 sleep 1
-
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
 
 sleep 2
+log "Setup sequence complete."
+log "Application interface active."
+log "Always-on-top layout configuration finalized."
 echo ""
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] done! overlay is running near the bottom of your screen"
-echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] stays on top even when Roblox is fullscreen"
-echo ""
-echo -e "  ${DARKBLUE}stop:${RESET}    pkill -f electron"
-echo -e "  ${DARKBLUE}restart:${RESET} cd $INSTALL_DIR && npm start"
-echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"

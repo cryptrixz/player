@@ -1,3 +1,5 @@
+-- Meow :3
+
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -11,6 +13,7 @@ if oldOverlay then
 end
 local RAILWAY_URL = "https://player-production-7e33.up.railway.app"
 local musicUrl = RAILWAY_URL .. "/music"
+local controlUrl = RAILWAY_URL .. "/control/"
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SpotifyOverlay"
 screenGui.ResetOnSpawn = false
@@ -58,7 +61,7 @@ albumCorner.CornerRadius = UDim.new(0, 12)
 albumCorner.Parent = albumArt
 local trackLabel = Instance.new("TextLabel")
 trackLabel.Name = "TrackLabel"
-trackLabel.Size = UDim2.new(0, 300, 0, 20)
+trackLabel.Size = UDim2.new(0, 240, 0, 20)
 trackLabel.Position = UDim2.new(0, 80, 0, 12)
 trackLabel.BackgroundTransparency = 1
 trackLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -70,7 +73,7 @@ trackLabel.Text = "Connecting..."
 trackLabel.Parent = mainFrame
 local artistLabel = Instance.new("TextLabel")
 artistLabel.Name = "ArtistLabel"
-artistLabel.Size = UDim2.new(0, 300, 0, 16)
+artistLabel.Size = UDim2.new(0, 240, 0, 16)
 artistLabel.Position = UDim2.new(0, 80, 0, 30)
 artistLabel.BackgroundTransparency = 1
 artistLabel.TextColor3 = Color3.fromRGB(170, 170, 178)
@@ -80,10 +83,32 @@ artistLabel.TextXAlignment = Enum.TextXAlignment.Left
 artistLabel.TextTruncate = Enum.TextTruncate.AtEnd
 artistLabel.Text = ""
 artistLabel.Parent = mainFrame
+local function makeControlButton(iconText, xPos)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 22, 0, 22)
+	btn.Position = UDim2.new(0, xPos, 0, 50)
+	btn.BackgroundTransparency = 1
+	btn.Text = iconText
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 16
+	btn.AutoButtonColor = false
+	btn.Parent = mainFrame
+	btn.MouseEnter:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.12), { TextTransparency = 0.3 }):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.12), { TextTransparency = 0 }):Play()
+	end)
+	return btn
+end
+local backBtn = makeControlButton("|<", 80)
+local playPauseBtn = makeControlButton("||", 108)
+local skipBtn = makeControlButton(">|", 136)
 local progressBarBg = Instance.new("Frame")
 progressBarBg.Name = "ProgressBarBg"
-progressBarBg.Size = UDim2.new(0, 280, 0, 4)
-progressBarBg.Position = UDim2.new(0, 80, 0, 54)
+progressBarBg.Size = UDim2.new(0, 210, 0, 4)
+progressBarBg.Position = UDim2.new(0, 168, 0, 58)
 progressBarBg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 progressBarBg.BackgroundTransparency = 0.8
 progressBarBg.BorderSizePixel = 0
@@ -113,7 +138,7 @@ sliderCircle.Parent = progressBarBg
 local timeCurrent = Instance.new("TextLabel")
 timeCurrent.Name = "TimeCurrent"
 timeCurrent.Size = UDim2.new(0, 34, 0, 14)
-timeCurrent.Position = UDim2.new(0, 80, 0, 62)
+timeCurrent.Position = UDim2.new(0, 166, 0, 64)
 timeCurrent.BackgroundTransparency = 1
 timeCurrent.TextColor3 = Color3.fromRGB(170, 170, 178)
 timeCurrent.Font = Enum.Font.Gotham
@@ -124,7 +149,7 @@ timeCurrent.Parent = mainFrame
 local timeTotal = Instance.new("TextLabel")
 timeTotal.Name = "TimeTotal"
 timeTotal.Size = UDim2.new(0, 34, 0, 14)
-timeTotal.Position = UDim2.new(0, 326, 0, 62)
+timeTotal.Position = UDim2.new(0, 344, 0, 64)
 timeTotal.BackgroundTransparency = 1
 timeTotal.TextColor3 = Color3.fromRGB(170, 170, 178)
 timeTotal.Font = Enum.Font.Gotham
@@ -185,11 +210,31 @@ UserInputService.InputEnded:Connect(function(input)
 		end
 	end
 end)
+local function sendControl(action)
+	task.spawn(function()
+		pcall(function()
+			customRequest({
+				Url = controlUrl .. action,
+				Method = "POST",
+			})
+		end)
+	end)
+end
+playPauseBtn.MouseButton1Click:Connect(function()
+	sendControl(isPlaying and "pause" or "play")
+end)
+skipBtn.MouseButton1Click:Connect(function()
+	sendControl("next")
+end)
+backBtn.MouseButton1Click:Connect(function()
+	sendControl("previous")
+end)
 RunService.Heartbeat:Connect(function(deltaTime)
 	local systemActive = appOnline
 	progressBarBg.Visible = systemActive
 	timeCurrent.Visible = systemActive
 	timeTotal.Visible = systemActive
+	playPauseBtn.Text = isPlaying and "||" or "|>"
 	if not isDragging and isPlaying and appOnline then
 		if targetSeconds < TOTAL_SECONDS then
 			targetSeconds = targetSeconds + deltaTime

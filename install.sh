@@ -32,9 +32,9 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 echo "Downloading app files..."
-curl -fsSL "$REPO_RAW/app.js" -o app.js
-curl -fsSL "$REPO_RAW/overlay.html" -o overlay.html
-curl -fsSL "$REPO_RAW/package.json" -o package.json
+curl -fsSL "$REPO_RAW/desktop-overlay/app.js" -o app.js
+curl -fsSL "$REPO_RAW/desktop-overlay/overlay.html" -o overlay.html
+curl -fsSL "$REPO_RAW/desktop-overlay/package.json" -o package.json
 
 echo "Installing dependencies (this may take a minute)..."
 npm install --silent

@@ -56,11 +56,9 @@ while true; do
             end if
         ')
         
-        # Pure Bash mapping loop extraction checking your native user music library folder
         SPOTIFY_CACHE="$HOME/Library/Caches/com.spotify.client/Data"
-        LATEST_ARTWORK=""
         if [ -d "$SPOTIFY_CACHE" ]; then
-            LATEST_ARTWORK=$(find "$SPOTIFY_CACHE" -type f -name "*.file" -o -name "*.png" -o -name "*.jpg" 2>/dev/null | xargs stat -f "%m %N" 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+            LATEST_ARTWORK=$(find "$SPOTIFY_CACHE" -type f \( -name "*.file" -o -name "*.png" -o -name "*.jpg" \) 2>/dev/null | xargs stat -f "%m %N" 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
             if [ -n "$LATEST_ARTWORK" ]; then
                 cp "$LATEST_ARTWORK" "$INSTALL_DIR/current_art.png" 2>/dev/null || true
             fi

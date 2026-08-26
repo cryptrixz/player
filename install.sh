@@ -75,7 +75,6 @@ done &
 APPLETEOF
 chmod +x kitty123.app/Contents/MacOS/applet
 
-#!/bin/bash
 set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"

@@ -3,299 +3,102 @@ set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 
-pkill -f "kitty123-app" 2>/dev/null || true
-pkill -f "electron" 2>/dev/null || true
+pkill -f "Electron" 2>/dev/null || true
+pkill -f "kitty123" 2>/dev/null || true
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-cat > "$INSTALL_DIR/main.swift" << 'SWIFTOF'
-import AppKit
-import Foundation
+cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
+{
+  "name": "spotify-overlay-desktop",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
+PKGEOF
 
-class OverlayWindow: NSWindow {
-    init(contentRect: NSRect) {
-        super.init(
-            contentRect: contentRect,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        self.isOpaque = false
-        self.backgroundColor = .clear
-        self.level = .statusBar
-        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        self.isMovableByWindowBackground = true
-        self.hasShadow = false
-    }
+cat > "$INSTALL_DIR/app.js" << 'APPEOF'
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu } = require('electron');
+const path = require('path');
+const { exec } = require('child_process');
+
+let win;
+let tray = null;
+
+function createOverlayWindow() {
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    win = new BrowserWindow({
+        width: 480,
+        height: 110,
+        x: Math.floor((width - 480) / 2),
+        y: height - 130,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        hasShadow: false,
+        skipTaskbar: true,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
+        }
+    });
+    
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'screen-saver', 1);
+    win.setIgnoreMouseEvents(false); 
+    win.loadFile(path.join(__dirname, 'overlay.html'));
+
+    startAutomationLoops();
 }
 
-class WaveView: NSView {
-    var barViews: [NSView] = []
-    var isAnimating: Bool = false
-    var timer: Timer?
-    var currentColor: NSColor = .white {
-        didSet {
-            for bv in barViews {
-                bv.layer?.backgroundColor = currentColor.cgColor
-            }
-        }
-    }
+function createTrayMenu() {
+    tray = new Tray(path.join(__dirname, 'icon.png'));
     
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        self.wantsLayer = true
-        
-        let barWidth: CGFloat = 3
-        let gap: CGFloat = 2
-        
-        for i in 0..<5 {
-            let bv = NSView(frame: NSRect(x: CGFloat(i) * (barWidth + gap), y: 0, width: barWidth, height: 4))
-            bv.wantsLayer = true
-            bv.layer?.backgroundColor = currentColor.cgColor
-            bv.layer?.cornerRadius = 1
-            self.addSubview(bv)
-            barViews.append(bv)
-        }
-    }
+    const contextMenu = Menu.buildFromTemplate([
+        { 
+            label: 'Open Overlay', 
+            click: () => { if (win && !win.isDestroyed()) win.showInactive(); } 
+        },
+        { 
+            label: 'Close Overlay', 
+            click: () => { if (win && !win.isDestroyed()) win.hide(); } 
+        },
+        { type: 'separator' },
+        { label: 'Quit', click: () => app.quit() }
+    ]);
     
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    
-    func setPlaying(_ playing: Bool) {
-        isAnimating = playing
-        if playing {
-            if timer == nil {
-                timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-                    self?.animateBars()
-                }
-            }
-        } else {
-            timer?.invalidate()
-            timer = nil
-            for bv in barViews {
-                bv.frame.size.height = 4
-                bv.frame.origin.y = 0
-            }
-        }
-    }
-    
-    private func animateBars() {
-        for bv in barViews {
-            let h = CGFloat.random(in: 4...18)
-            bv.frame.size.height = h
-            bv.frame.origin.y = (20 - h) / 2
-        }
-    }
+    tray.setContextMenu(contextMenu);
 }
 
-class OverlayViewController: NSViewController {
-    let boxView = NSView()
-    let artView = NSImageView()
-    let trackLabel = NSTextField(labelWithString: "Connecting...")
-    let artistLabel = NSTextField(labelWithString: "")
-    let playPauseBtn = NSButton(title: "||", target: nil, action: nil)
-    let nextBtn = NSButton(title: ">|", target: nil, action: nil)
-    let prevBtn = NSButton(title: "|<", target: nil, action: nil)
-    let progressBg = NSView()
-    let progressFill = NSView()
-    let waveView = WaveView(frame: NSRect(x: 390, y: 30, width: 25, height: 20))
-    
-    var totalDuration: Double = 1.0
-    var currentPosition: Double = 0.0
-    var isPlaying: Bool = false
-    
-    override func loadView() {
-        self.view = NSView(frame: NSRect(x: 0, y: 0, width: 450, height: 80))
+function startAutomationLoops() {
+    setInterval(() => {
+        if (!win || win.isDestroyed()) return;
         
-        boxView.frame = self.view.bounds
-        boxView.wantsLayer = true
-        boxView.layer?.backgroundColor = NSColor(white: 0.06, alpha: 0.88).cgColor
-        boxView.layer?.cornerRadius = 18
-        boxView.layer?.borderWidth = 1
-        boxView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.22).cgColor
-        self.view.addSubview(boxView)
-        
-        artView.frame = NSRect(x: 12, y: 12, width: 56, height: 56)
-        artView.wantsLayer = true
-        artView.layer?.cornerRadius = 12
-        artView.imageScaling = .imageScaleProportionallyUpOrDown
-        boxView.addSubview(artView)
-        
-        trackLabel.frame = NSRect(x: 80, y: 42, width: 300, height: 20)
-        trackLabel.font = .systemFont(ofSize: 14, weight: .bold)
-        trackLabel.textColor = .white
-        boxView.addSubview(trackLabel)
-        
-        artistLabel.frame = NSRect(x: 80, y: 22, width: 300, height: 18)
-        artistLabel.font = .systemFont(ofSize: 12)
-        artistLabel.textColor = NSColor(white: 0.7, alpha: 1.0)
-        boxView.addSubview(artistLabel)
-        
-        prevBtn.frame = NSRect(x: 80, y: 2, width: 30, height: 18)
-        prevBtn.isBordered = false
-        prevBtn.target = self
-        prevBtn.action = #selector(doPrev)
-        boxView.addSubview(prevBtn)
-        
-        playPauseBtn.frame = NSRect(x: 115, y: 2, width: 30, height: 18)
-        playPauseBtn.isBordered = false
-        playPauseBtn.target = self
-        playPauseBtn.action = #selector(doPlayPause)
-        boxView.addSubview(playPauseBtn)
-        
-        nextBtn.frame = NSRect(x: 150, y: 2, width: 30, height: 18)
-        nextBtn.isBordered = false
-        nextBtn.target = self
-        nextBtn.action = #selector(doNext)
-        boxView.addSubview(nextBtn)
-        
-        progressBg.frame = NSRect(x: 190, y: 8, width: 240, height: 4)
-        progressBg.wantsLayer = true
-        progressBg.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.25).cgColor
-        progressBg.layer?.cornerRadius = 2
-        boxView.addSubview(progressBg)
-        
-        progressFill.frame = NSRect(x: 0, y: 0, width: 0, height: 4)
-        progressFill.wantsLayer = true
-        progressFill.layer?.backgroundColor = NSColor.white.cgColor
-        progressFill.layer?.cornerRadius = 2
-        progressBg.addSubview(progressFill)
-        
-        boxView.addSubview(waveView)
-        
-        let gesture = NSClickGestureRecognizer(target: self, action: #selector(doScrub(_:)))
-        progressBg.addGestureRecognizer(gesture)
-    }
-    
-    @objc func doPlayPause() { runAppleScript("tell application \"Spotify\" to playpause") }
-    @objc func doNext() { runAppleScript("tell application \"Spotify\" to next track") }
-    @objc func doPrev() { runAppleScript("tell application \"Spotify\" to previous track") }
-    
-    @objc func doScrub(_ sender: NSClickGestureRecognizer) {
-        let loc = sender.location(in: progressBg)
-        let pct = max(0.0, min(1.0, loc.x / progressBg.bounds.width))
-        let target = pct * totalDuration
-        runAppleScript("tell application \"Spotify\" to set player position to \(target)")
-    }
-    
-    func runAppleScript(_ cmd: String) {
-        if let script = NSAppleScript(source: cmd) {
-            var error: NSDictionary?
-            script.executeAndReturnError(&error)
-        }
-    }
-    
-    func updateData(track: String, artist: String, duration: Double, position: Double, status: String, artPath: String) {
-        trackLabel.stringValue = track
-        artistLabel.stringValue = artist
-        totalDuration = duration
-        currentPosition = position
-        isPlaying = (status == "playing")
-        playPauseBtn.title = isPlaying ? "||" : "|>"
-        waveView.setPlaying(isPlaying)
-        
-        let pct = totalDuration > 0 ? min(1.0, currentPosition / totalDuration) : 0.0
-        progressFill.frame.size.width = pct * progressBg.bounds.width
-        
-        if !artPath.isEmpty, let img = NSImage(contentsOfFile: artPath) {
-            artView.image = img
-            if let targetColor = extractDominantColor(from: img) {
-                waveView.currentColor = targetColor
+        exec('osascript -e "get name of first application process whose frontmost is true"', (err, stdout) => {
+            if (err) return;
+            const activeApp = stdout.trim();
+            const isRobloxActive = activeApp.includes('Roblox') || activeApp.includes('RobloxPlayer');
+            
+            if (isRobloxActive) {
+                if (!win.isVisible()) win.showInactive();
             } else {
-                waveView.currentColor = .white
+                if (win.isVisible()) win.hide();
             }
-        } else {
-            artView.image = nil
-            waveView.currentColor = .white
-        }
-    }
-    
-    private func extractDominantColor(from image: NSImage) -> NSColor? {
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        let x = bitmap.pixelsWide / 2
-        let y = bitmap.pixelsHigh / 2
-        return bitmap.colorAt(x: x, y: y)
-    }
-}
-SWIFTOF
+        });
+    }, 250);
 
-#!/bin/bash
-set -e
+    setInterval(() => {
+        if (!win || win.isDestroyed() || !win.isVisible()) return;
 
-INSTALL_DIR="$HOME/spotify-overlay-app"
-cd "$INSTALL_DIR"
-
-cat > "$INSTALL_DIR/appdelegate.swift" << 'DELEGATEEOF'
-import AppKit
-import Foundation
-
-class AppDelegate: NSObject, NSApplicationDelegate {
-    var window: OverlayWindow!
-    var controller: OverlayViewController!
-    var trayItem: NSStatusItem!
-    
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        let mainDisplay = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let winWidth: CGFloat = 450
-        let winHeight: CGFloat = 80
-        let xPos = (mainDisplay.width - winWidth) / 2
-        let yPos = mainDisplay.minY + 20
-        
-        window = OverlayWindow(contentRect: NSRect(x: xPos, y: yPos, width: winWidth, height: winHeight))
-        controller = OverlayViewController()
-        window.contentViewController = controller
-        window.makeKeyAndOrderFront(nil)
-        
-        setupTray()
-        startTrackingTimers()
-    }
-    
-    func setupTray() {
-        trayItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        trayItem.button?.title = "🎵"
-        
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Open Overlay", action: #selector(showWin), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Close Overlay", action: #selector(hideWin), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Kitty123", action: #selector(quitApp), keyEquivalent: "q"))
-        trayItem.menu = menu
-    }
-    
-    @objc func showWin() { window.orderFront(nil) }
-    @objc func hideWin() { window.orderOut(nil) }
-    @objc func quitApp() { NSApp.terminate(nil) }
-    
-    func startTrackingTimers() {
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            let script = """
-            tell application "System Events"
-                try
-                    set frontApp to name of first application process whose frontmost is true
-                    return frontApp
-                on error
-                    return ""
-                end try
-            end tell
-            """
-            if let appleScript = NSAppleScript(source: script) {
-                var err: NSDictionary?
-                let res = appleScript.executeAndReturnError(&err).stringValue ?? ""
-                let isRoblox = res.contains("Roblox") || res.contains("RobloxPlayer")
-                
-                DispatchQueue.main.async {
-                    if isRoblox {
-                        if !self.window.isVisible { self.window.orderFront(nil) }
-                    } else {
-                        if self.window.isVisible { self.window.orderOut(nil) }
-                    }
-                }
-            }
-        }
-        
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            guard self.window.isVisible else { return }
-            let script = """
+        const appleScript = `
             if application "Spotify" is running then
                 tell application "Spotify"
                     try
@@ -305,55 +108,272 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         set totalDur to duration of cTrack
                         set playerPos to player position
                         set pState to player state as string
-                        
-                        set cacheDir to POSIX path of (path to caches folder from user domain)
-                        set artPath to cacheDir & "com.spotify.client/Artwork/"
-                        
-                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState & "||" & artPath
+                        set artworkUrl to artwork url of cTrack
+                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState & "||" & artworkUrl
                     on error
                         return "No Track"
                     end try
                 end tell
             end if
             return "No Track"
-            """
-            
-            if let appleScript = NSAppleScript(source: script) {
-                var err: NSDictionary?
-                let res = appleScript.executeAndReturnError(&err).stringValue ?? "No Track"
-                if res == "No Track" { return }
+        `;
+
+        exec(`osascript -e '${appleScript}'`, (err, stdout) => {
+            if (err || !stdout || stdout.trim() === "No Track") {
+                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "" });
+                if (tray) tray.setTitle("");
+                return;
+            }
+
+            const parts = stdout.trim().split('||');
+            if (parts.length >= 6) {
+                const trackTitle = parts[0];
+                const artistName = parts[1];
+                const rawDur = Number(parts[2]);
+                const rawPos = Number(parts[3]);
                 
-                let parts = res.components(separatedBy: "||")
-                if parts.count >= 5 {
-                    let track = parts
-                    let artist = parts
-                    let duration = (Double(parts) ?? 1000.0) / 1000.0
-                    let position = Double(parts) ?? 0.0
-                    let status = parts.lowercased()
-                    let artwork = parts.count >= 6 ? parts : ""
-                    
-                    DispatchQueue.main.async {
-                        self.controller.updateData(track: track, artist: artist, duration: duration, position: position, status: status, artPath: artwork)
-                        self.trayItem.button?.title = "\(track) - \(artist)"
-                    }
+                const isAd = trackTitle.toLowerCase().includes("advertisement") || artistName.toLowerCase().includes("spotify") || rawDur === 0;
+                const calculatedDur = isAd ? 30 : Math.floor(rawDur / 1000);
+                const calculatedPos = isAd ? Math.floor(rawPos) : rawPos;
+
+                win.webContents.send('spotify-data', {
+                    track: trackTitle,
+                    artist: artistName,
+                    duration: calculatedDur,
+                    position: calculatedPos,
+                    status: parts[4].toLowerCase(),
+                    image: parts[5],
+                    isAd: isAd
+                });
+                if (tray) {
+                    let displayStr = trackTitle + " - " + artistName;
+                    if (displayStr.length > 20) displayStr = displayStr.substring(0, 17) + "...";
+                    tray.setTitle(displayStr);
                 }
             }
-        }
-    }
+        });
+    }, 250);
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
-DELEGATEEOF
+ipcMain.on('spotify-control', (event, data) => {
+    let script = '';
+    if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
+    if (data.action === 'next') script = 'tell application "Spotify" to next track';
+    if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
+    if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
 
-swiftc -O main.swift appdelegate.swift -o kitty123-app
+    if (script) {
+        exec(`osascript -e '${script}'`, (err) => { if (err) console.log(err); });
+    }
+});
 
-mkdir -p kitty123.app/Contents/MacOS
-mkdir -p kitty123.app/Contents/Resources
-mv kitty123-app kitty123.app/Contents/MacOS/
+app.whenReady().then(() => {
+    createOverlayWindow();
+    createTrayMenu();
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) createOverlayWindow();
+    });
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+});
+APPEOF
+
+cat > "$INSTALL_DIR/preload.js" << 'PREEOF'
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+    onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value)),
+    sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value })
+});
+PREEOF
+
+echo "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAWklEQVQ4y2P4//8/AyUYGegETGg0gGgD0M0gWh9WDRDVAHQzSDYAXQ0w1gB0M8g2AN0MMNYAdDPINgDdDLL1YdUAUQ0g2gB0M4jWh1UDRDWAaAPQzSBaH8wAALw9GBl7N9GNAAAAAElFTkSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
+
+#!/bin/bash
+set -e
+
+INSTALL_DIR="$HOME/spotify-overlay-app"
+cd "$INSTALL_DIR"
+
+ARCH=$(uname -m)
+if ! command -v node &> /dev/null; then
+    if [ "$ARCH" == "arm64" ]; then
+        NODE_URL="https://nodejs.org"
+    else
+        NODE_URL="https://nodejs.org"
+    fi
+    curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
+    sudo installer -pkg /tmp/node-installer.pkg -target /
+    rm /tmp/node-installer.pkg
+    export PATH="/usr/local/bin:$PATH"
+fi
+
+cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Spotify Overlay</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;background-color:rgba(0,0,0,0) !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
+body{display:flex;align-items:center;justify-content:center}
+.shell{
+    -webkit-app-region: drag;
+    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden
+}
+.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
+.artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
+.meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px;position:relative}
+.track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.btns{
+    -webkit-app-region: no-drag;
+    display:flex;gap:12px;flex-shrink:0;color:#fff;font-size:14px;font-weight:700;cursor:pointer
+}
+.btns span:hover { color: rgb(30, 215, 96); }
+.progress-wrap{
+    -webkit-app-region: no-drag;
+    flex:1;display:flex;flex-direction:column;gap:2px;min-width:0
+}
+.bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
+.bar-fill{height:100%;width:0%;border-radius:2px;background:#fff;transition:width 0.1s linear}
+.times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
+.island-waves {
+    position: absolute;
+    right: 0;
+    top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 20px;
+    width: 40px;
+    justify-content: flex-end
+}
+.wave-bar {
+    width: 3px;
+    height: 4px;
+    background-color: #fff;
+    border-radius: 1px;
+    transition: height 0.15s ease-in-out
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <img class="art" id="art" alt="" style="display:none"/>
+  <div class="artph" id="artPh">♪</div>
+  <div class="meta">
+    <div class="track" id="track">Connecting...</div>
+    <div class="artist" id="artist"></div>
+    <div class="island-waves" id="islandWaves">
+      <div class="wave-bar" style="animation-delay: 0.0s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.4s;"></div>
+    </div>
+    <div class="row">
+      <div class="btns">
+        <span id="btnPrev">|&lt;</span>
+        <span id="btnPP">||</span>
+        <span id="btnNext">&gt;|</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="bar-bg" id="progressBg"><div class="bar-fill" id="fill"></div></div>
+        <div class="times"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let total=1,pos=0,playing=false,lastImg="";
+function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
+function paint(dominantColor = null){
+    const r=total>0?Math.min(1,pos/total):0;
+    document.getElementById("fill").style.width=(r*100)+"%";
+    document.getElementById("tCur").textContent=fmt(pos);
+    document.getElementById("tTot").textContent=fmt(total);
+    
+    const bars = document.querySelectorAll('.wave-bar');
+    bars.forEach((bar) => {
+        if (dominantColor) {
+            bar.style.backgroundColor = dominantColor;
+        } else {
+            bar.style.backgroundColor = "#fff";
+        }
+    });
+}
+
+document.getElementById('btnPrev').addEventListener('click', () => window.electronAPI.sendControl('prev'));
+document.getElementById('btnPP').addEventListener('click', () => window.electronAPI.sendControl('playpause'));
+document.getElementById('btnNext').addEventListener('click', () => window.electronAPI.sendControl('next'));
+
+document.getElementById('progressBg').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    const targetSeconds = Math.floor(percentage * total);
+    pos = targetSeconds;
+    paint();
+    window.electronAPI.sendControl('scrub', targetSeconds);
+});
+
+window.electronAPI.onSpotifyData((d) => {
+    document.getElementById("track").textContent = d.track || "Spotify";
+    document.getElementById("artist").textContent = d.artist || "No track playing";
+    total = Math.max(1, Number(d.duration) || 1);
+    
+    const incomingPos = Math.max(0, Number(d.position) || 0);
+    if (!playing || Math.abs(incomingPos - pos) > 2) {
+        pos = incomingPos;
+    }
+    
+    playing = d.status === "playing" || d.status === "kpsp";
+    document.getElementById("btnPP").textContent = playing ? "||" : "|>";
+    setArt(d.image || "");
+    
+    if (d.image) {
+        paint("rgb(230, 40, 40)");
+    } else {
+        paint(null);
+    }
+});
+
+setInterval(() => {
+    if (playing && pos < total) {
+        pos = Math.min(total, pos + 0.1);
+        paint(document.getElementById("art").style.display === "block" ? "rgb(230, 40, 40)" : null);
+    }
+}, 100);
+
+const bars = document.querySelectorAll('.wave-bar');
+setInterval(() => {
+    bars.forEach((bar) => {
+        if (playing) {
+            const randomHeight = Math.floor(Math.random() * 16) + 4;
+            bar.style.height = randomHeight + 'px';
+        } else {
+            bar.style.height = '4px';
+        }
+    });
+}, 150);
+</script>
+</body>
+</html>
+HTMLEOF
+
+npm install --silent
+
+xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
+codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
+
+# Turn the AppleScript execution structure into kitty123.app bundle format without compiler tools
+osacompile -e "do shell script \"cd $INSTALL_DIR && nohup ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . > /dev/null 2>&1 &\"" -o kitty123.app
 
 cat > kitty123.app/Contents/Info.plist << 'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -361,17 +381,15 @@ cat > kitty123.app/Contents/Info.plist << 'PLISTEOF'
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>kitty123-app</string>
+    <string>applet</string>
     <key>CFBundleIdentifier</key>
-    <string>com.kitty123.spotifyoverlay</string>
+    <string>com.kitty123.overlay</string>
     <key>CFBundleName</key>
     <string>Kitty123</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
-    <key>LSUIElement</key>
-    <string>1</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
 </dict>
@@ -405,8 +423,4 @@ PYEOF
 python3 make_icon.py 2>/dev/null || true
 rm -rf AppIcon.iconset source.png make_icon.py
 
-xattr -cr kitty123.app 2>/dev/null || true
-codesign --force --deep --sign - kitty123.app/Contents/MacOS/kitty123-app 2>/dev/null || true
-
 open kitty123.app
-echo "Done. Native App compiled."

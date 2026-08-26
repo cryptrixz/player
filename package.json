@@ -1,15 +1,11 @@
 {
-  "name": "spotify-overlay-backend",
+  "name": "spotify-overlay-desktop",
   "version": "1.0.0",
-  "description": "Tiny backend that stores current Spotify status for the Roblox overlay",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "electron ."
   },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "express": "^4.19.2"
+  "devDependencies": {
+    "electron": "^31.0.0"
   }
 }

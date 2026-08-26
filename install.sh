@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-RAILWAY_URL="https://player-production-7e33.up.railway.app"
+RAILWAY_URL="https://railway.app"
 INSTALL_DIR="$HOME/spotify-overlay"
 MUSIC_URL="${RAILWAY_URL%/}/music"
 PLIST="$HOME/Library/LaunchAgents/com.spotify.overlay.plist"
@@ -12,31 +12,11 @@ echo "== Spotify Mac Overlay (no executor) =="
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$HOME/Library/LaunchAgents"
 
-cat > "$INSTALL_DIR/push_music.sh" << 'SCRIPT_EOF'
-#!/bin/bash
-MUSIC_URL="__MUSIC_URL__"
-LAST_ART_KEY=""
-LAST_ART_URL=""
-
-json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-
-time_to_sec() {
-  local t; t=$(printf '%s' "$1" | tr -d '[:space:]')
-  if [[ "$t" =~ ^([0-9]+):([0-9]+)$ ]]; then
-    echo $((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
-  else echo 0; fi
-}
-
-fetch_artwork() {
-  local track="$1" artist="$2" key="${artist}|||${track}"
-  if [ "$key" = "$LAST_ART_KEY" ] && [ -n "$LAST_ART_URL" ]; then printf '%s' "$LAST_ART_URL"; return; fi
-  local q raw art
-  q=$(printf '%s %s' "$artist" "$track" | sed 's/ /+/g; s/&/%26/g; s/,/%2C/g')
-  raw=$(curl -s --max-time 5 "https://itunes.apple.com/search?term=${q}&entity=song&limit=5" 2>/dev/null || true)
+cat > "$INSTALL_DIR/push_music.sh" /dev/null || true)
   art=$(printf '%s' "$raw" | grep -o '"artworkUrl100":"[^"]*"' | head -1 | sed 's/"artworkUrl100":"//;s/"$//;s/\\//g;s/100x100bb/600x600bb/g;s/100x100/600x600/g')
   if [ -z "$art" ]; then
     q=$(printf '%s' "$track" | sed 's/ /+/g')
-    raw=$(curl -s --max-time 5 "https://itunes.apple.com/search?term=${q}&entity=song&limit=5" 2>/dev/null || true)
+    raw=$(curl -s --max-time 5 "https://apple.com{q}&entity=song&limit=5" 2>/dev/null || true)
     art=$(printf '%s' "$raw" | grep -o '"artworkUrl100":"[^"]*"' | head -1 | sed 's/"artworkUrl100":"//;s/"$//;s/\\//g;s/100x100bb/600x600bb/g;s/100x100/600x600/g')
   fi
   LAST_ART_KEY="$key"; LAST_ART_URL="$art"; printf '%s' "$art"
@@ -45,7 +25,7 @@ fetch_artwork() {
 fetch_dur() {
   local track="$1" artist="$2" q raw ms
   q=$(printf '%s %s' "$artist" "$track" | sed 's/ /+/g; s/&/%26/g')
-  raw=$(curl -s --max-time 4 "https://itunes.apple.com/search?term=${q}&entity=song&limit=1" 2>/dev/null || true)
+  raw=$(curl -s --max-time 4 "https://apple.com{q}&entity=song&limit=1" 2>/dev/null || true)
   ms=$(printf '%s' "$raw" | grep -o '"trackTimeMillis":[0-9]*' | head -1 | grep -o '[0-9]*')
   if [ -n "$ms" ] && [ "$ms" -gt 1000 ] 2>/dev/null; then echo $((ms / 1000)); else echo 0; fi
 }
@@ -85,7 +65,7 @@ tell application "Google Chrome"
   repeat with w in windows
     repeat with t in tabs of w
       try
-        if (URL of t) contains "open.spotify.com" then
+        if (URL of t) contains "://spotify.com" then
           set tabTitle to title of t
           set times to ""
           try
@@ -125,7 +105,7 @@ tell application "Safari"
   repeat with w in windows
     repeat with t in tabs of w
       try
-        if (URL of t) contains "open.spotify.com" then
+        if (URL of t) contains "://spotify.com" then
           set tabTitle to name of t
           set times to ""
           try
@@ -183,17 +163,17 @@ cat > "$OVERLAY_HTML" << 'HTMLEOF'
 <title>Spotify Overlay</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;overflow:hidden;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
-body{display:flex;align-items:flex-end;justify-content:center;padding-bottom:20px}
-.shell{width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
-.art{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;background-color:rgba(0,0,0,0) !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
+body{display:flex;align-items:center;justify-content:center}
+.shell{-webkit-app-region:drag;cursor:move;width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
+.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
 .artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row{display:flex;align-items:center;gap:8px;margin-top:8px}
-.btns{display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700}
-.progress-wrap{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.btns{-webkit-app-region:no-drag;display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700;cursor:pointer}
+.progress-wrap{-webkit-app-region:no-drag;flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative}
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff}
 .dot{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;margin-left:-6px;border-radius:50%;background:#fff;left:0%}
@@ -217,7 +197,7 @@ body{display:flex;align-items:flex-end;justify-content:center;padding-bottom:20p
   </div>
 </div>
 <script>
-const API="https://player-production-7e33.up.railway.app/music";
+const API="https://railway.app";
 let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
@@ -230,68 +210,76 @@ setInterval(poll,1000);setInterval(()=>{if(playing&&total>1){pos=Math.min(total,
 </html>
 HTMLEOF
 
+cat > "$INSTALL_DIR/package.json" << 'JSONEOF'
+{
+  "name": "spotify-overlay-window",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "start": "electron app.js"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
+JSONEOF
+
+cat > "$INSTALL_DIR/app.js" << 'APPEOF'
+const { app, BrowserWindow, screen } = require('electron');
+const path = require('path');
+
+function createOverlayWindow() {
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    const win = new BrowserWindow({
+        width: 480,
+        height: 110,
+        x: Math.floor((width - 480) / 2),
+        y: height - 120,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        hasShadow: false,
+        skipTaskbar: true,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true
+        }
+    });
+
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'screen-saver', 1);
+    win.setIgnoreMouseEvents(true, { forward: true });
+    win.loadFile(path.join(__dirname, 'overlay.html'));
+}
+
+app.whenReady().then(() => {
+    createOverlayWindow();
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) createOverlayWindow();
+    });
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+});
+APPEOF
+
 cat > "$INSTALL_DIR/start-overlay.sh" << 'START'
 #!/bin/bash
 INSTALL_DIR="$HOME/spotify-overlay"
-HTML="$INSTALL_DIR/overlay.html"
-open_chrome() {
-  local CHROME=""
-  for c in \
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-  do
-    [ -x "$c" ] && CHROME="$c" && break
-  done
-  if [ -n "$CHROME" ]; then
-    "$CHROME" --app="file://${HTML}" --window-size=480,140 --window-position=720,900 --disable-extensions --no-first-run >/dev/null 2>&1 &
-    return 0
-  fi
-  return 1
-}
-if ! open_chrome; then open -a Safari "$HTML"; fi
-sleep 1
-osascript <<'AS' 2>/dev/null || true
-tell application "System Events"
-  set procs to {"Google Chrome", "Chromium", "Microsoft Edge", "Safari"}
-  repeat with pname in procs
-    if exists process pname then
-      tell process pname
-        set frontmost to true
-        try
-          set position of front window to {700, 900}
-          set size of front window to {480, 140}
-        end try
-      end tell
-      exit repeat
-    end if
-  end repeat
-end tell
-AS
-echo "Overlay window opened."
+cd "$INSTALL_DIR"
+if [ ! -d "node_modules" ]; then
+  npm install --silent
+fi
+nohup npm start > /dev/null 2>&1 &
+echo "Overlay window opened via Electron wrapper."
 START
 chmod +x "$INSTALL_DIR/start-overlay.sh"
 
 cat > "$INSTALL_DIR/stop-overlay.sh" << 'STOP'
 #!/bin/bash
-osascript <<'AS' 2>/dev/null || true
-tell application "System Events"
-  repeat with pname in {"Google Chrome", "Chromium", "Microsoft Edge"}
-    if exists process pname then
-      tell process pname
-        repeat with w in windows
-          try
-            if name of w contains "Spotify Overlay" then
-              click button 1 of w
-            end if
-          end try
-        end repeat
-      end tell
-    end if
-  end repeat
-end tell
-AS
-pkill -f "app=file://.*spotify-overlay/overlay.html" 2>/dev/null || true
+pkill -f "electron app.js" 2>/dev/null || true
 echo "Overlay window closed. Scanner still running."
 STOP
 chmod +x "$INSTALL_DIR/stop-overlay.sh"
@@ -303,6 +291,7 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 pkill -f push_music.sh 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.spotify.overlay.plist"
 bash "$HOME/spotify-overlay/stop-overlay.sh" 2>/dev/null || true
+rm -rf "$HOME/spotify-overlay"
 echo "Stopped scanner + overlay."
 UN
 chmod +x "$INSTALL_DIR/uninstall.sh"
@@ -319,7 +308,7 @@ sleep 1
 
 cat > "$PLIST" << PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -344,13 +333,11 @@ PLIST_EOF
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || true
 sleep 1
+
+cd "$INSTALL_DIR"
+echo "Downloading frameless rendering dependencies..."
+npm install --silent
+
 bash "$INSTALL_DIR/start-overlay.sh"
 
-echo ""
-echo "======================================================"
 echo "Done. No Roblox executor required."
-echo "  Stop overlay:     ~/spotify-overlay/stop-overlay.sh"
-echo "  Stop everything:  ~/spotify-overlay/uninstall.sh"
-echo "  Start overlay:    ~/spotify-overlay/start-overlay.sh"
-echo "Use Roblox windowed/borderless so the overlay can sit on top."
-echo "======================================================"

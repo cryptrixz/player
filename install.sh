@@ -20,6 +20,7 @@ echo "This installs a small floating window that always stays on top of"
 echo "everything else, including fullscreen apps like Roblox."
 echo ""
 
+# --- Check for Node.js, install via the official .pkg installer if missing ---
 if ! command -v node &> /dev/null; then
     echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] Node.js not found, downloading installer..."
     ARCH=$(uname -m)
@@ -41,9 +42,9 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] downloading app files..."
-curl -fsSL "$REPO_RAW/desktop-overlay/app.js" -o app.js
-curl -fsSL "$REPO_RAW/desktop-overlay/overlay.html" -o overlay.html
-curl -fsSL "$REPO_RAW/desktop-overlay/package.json" -o package.json
+curl -fsSL "$REPO_RAW/app.js" -o app.js
+curl -fsSL "$REPO_RAW/overlay.html" -o overlay.html
+curl -fsSL "$REPO_RAW/electron-package.json" -o package.json
 
 echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] installing dependencies..."
 npm install --silent
@@ -53,6 +54,7 @@ echo -e "${DARKBLUE}────────────────────
 echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] setup complete, launching overlay..."
 echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"
 
+# Kill any previous instance first
 pkill -f "electron $INSTALL_DIR" 2>/dev/null || true
 sleep 1
 

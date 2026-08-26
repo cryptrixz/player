@@ -1,29 +1,22 @@
 #!/bin/bash
 set -e
 
-# ==== SET THIS after deploying the Railway backend ====
-# Example: https://spotify-overlay-production.up.railway.app
 RAILWAY_URL="https://player-production-7e33.up.railway.app"
-# ========================================================
-
 INSTALL_DIR="$HOME/spotify-overlay"
-
 MUSIC_URL="${RAILWAY_URL%/}/music"
+OVERLAY_RAW="https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"
 
 echo "== Spotify Overlay Setup =="
-echo "This sets up a background script that publishes your Spotify status"
-echo "to your own Railway backend at:"
-echo "  $MUSIC_URL"
+echo "Publishing Spotify status to: $MUSIC_URL"
 echo ""
 
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-cat > "$INSTALL_DIR/push_music.sh" <<SCRIPT_EOF
+cat > "$INSTALL_DIR/push_music.sh" <<'SCRIPT_EOF'
 #!/bin/bash
-
-MUSIC_URL="$MUSIC_URL"
-
+MUSIC_URL="__MUSIC_URL__"
+INSTALL_DIR="__INSTALL_DIR__"
 while true; do
     STATUS="paused"
     TRACK=""
@@ -32,22 +25,20 @@ while true; do
     DUR=1
     FOUND="no"
 
-    # --- Desktop app, only trusted if actually playing ---
     if pgrep -x "Spotify" > /dev/null; then
-        APP_STATUS=\$(osascript -e 'tell application "Spotify" to player state' 2>/dev/null)
-        if [ "\$APP_STATUS" == "playing" ]; then
+        APP_STATUS=$(osascript -e 'tell application "Spotify" to player state' 2>/dev/null)
+        if [ "$APP_STATUS" = "playing" ]; then
             STATUS="playing"
-            TRACK=\$(osascript -e 'tell application "Spotify" to name of current track' 2>/dev/null | sed 's/"/\\\\"/g')
-            ARTIST=\$(osascript -e 'tell application "Spotify" to artist of current track' 2>/dev/null | sed 's/"/\\\\"/g')
-            POS=\$(osascript -e 'tell application "Spotify" to player position' 2>/dev/null | cut -d'.' -f1)
-            DUR=\$(osascript -e 'tell application "Spotify" to (duration of current track) / 1000' 2>/dev/null | cut -d'.' -f1)
+            TRACK=$(osascript -e 'tell application "Spotify" to name of current track' 2>/dev/null | sed 's/"/\\"/g')
+            ARTIST=$(osascript -e 'tell application "Spotify" to artist of current track' 2>/dev/null | sed 's/"/\\"/g')
+            POS=$(osascript -e 'tell application "Spotify" to player position' 2>/dev/null | cut -d'.' -f1)
+            DUR=$(osascript -e 'tell application "Spotify" to (duration of current track) / 1000' 2>/dev/null | cut -d'.' -f1)
             FOUND="yes"
         fi
     fi
 
-    # --- Otherwise scan ALL browser tabs (not just active one) for open.spotify.com ---
-    if [ "\$FOUND" == "no" ]; then
-        CHROME_TITLE=\$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
+    if [ "$FOUND" = "no" ]; then
+        CHROME_TITLE=$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
 tell application "Google Chrome"
     if it is running then
         repeat with w in windows
@@ -62,8 +53,8 @@ tell application "Google Chrome"
 end tell
 APPLESCRIPT_EOF
 )
-        if [ -z "\$CHROME_TITLE" ]; then
-            SAFARI_TITLE=\$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
+        if [ -z "$CHROME_TITLE" ]; then
+            SAFARI_TITLE=$(osascript <<'APPLESCRIPT_EOF' 2>/dev/null
 tell application "Safari"
     if it is running then
         repeat with w in windows
@@ -79,60 +70,67 @@ end tell
 APPLESCRIPT_EOF
 )
         fi
-
         FOUND_TITLE=""
-        if [ -n "\$CHROME_TITLE" ]; then
-            FOUND_TITLE="\$CHROME_TITLE"
-        elif [ -n "\$SAFARI_TITLE" ]; then
-            FOUND_TITLE="\$SAFARI_TITLE"
+        if [ -n "$CHROME_TITLE" ]; then
+            FOUND_TITLE="$CHROME_TITLE"
+        elif [ -n "$SAFARI_TITLE" ]; then
+            FOUND_TITLE="$SAFARI_TITLE"
         fi
-
-        if [ -n "\$FOUND_TITLE" ]; then
-            CLEAN_TITLE=\$(echo "\$FOUND_TITLE" | sed 's/ - Spotify//g')
-            TRACK=\$(echo "\$CLEAN_TITLE" | awk -F ' by ' '{print \$1}')
-            ARTIST=\$(echo "\$CLEAN_TITLE" | awk -F ' by ' '{print \$2}')
+        if [ -n "$FOUND_TITLE" ]; then
+            CLEAN_TITLE=$(echo "$FOUND_TITLE" | sed 's/ - Spotify//g')
+            TRACK=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $1}')
+            ARTIST=$(echo "$CLEAN_TITLE" | awk -F ' by ' '{print $2}')
             STATUS="playing"
             FOUND="yes"
         fi
     fi
 
-    if [ -z "\$TRACK" ]; then TRACK="No Track Playing"; fi
-    if [ -z "\$POS" ]; then POS=0; fi
-    if [ -z "\$DUR" ]; then DUR=1; fi
-    if [ "\$FOUND" == "no" ]; then STATUS="paused"; fi
+    if [ -z "$TRACK" ]; then TRACK="No Track Playing"; fi
+    if [ -z "$POS" ]; then POS=0; fi
+    if [ -z "$DUR" ]; then DUR=1; fi
+    if [ "$FOUND" = "no" ]; then STATUS="paused"; fi
 
-    JSON_CONTENT="{\\"status\\":\\"\$STATUS\\",\\"track\\":\\"\$TRACK\\",\\"artist\\":\\"\$ARTIST\\",\\"position\\":\$POS,\\"duration\\":\$DUR}"
-    echo "\$JSON_CONTENT" > "$INSTALL_DIR/music.json"
-
-    # POST straight to your own Railway backend
-    curl -s -X POST "\$MUSIC_URL" \
+    JSON_CONTENT="{\"status\":\"$STATUS\",\"track\":\"$TRACK\",\"artist\":\"$ARTIST\",\"position\":$POS,\"duration\":$DUR}"
+    echo "$JSON_CONTENT" > "$INSTALL_DIR/music.json"
+    curl -s -X POST "$MUSIC_URL" \
         -H "Content-Type: application/json" \
-        -d "\$JSON_CONTENT" > /dev/null
-
+        -d "$JSON_CONTENT" > /dev/null
     sleep 10
 done
 SCRIPT_EOF
 
+sed -i '' "s|__MUSIC_URL__|$MUSIC_URL|g" "$INSTALL_DIR/push_music.sh"
+sed -i '' "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$INSTALL_DIR/push_music.sh"
 chmod +x "$INSTALL_DIR/push_music.sh"
 
-pkill -f push_music.sh 2>/dev/null || true
-sleep 1
+echo "Checking Accessibility permission for Terminal / osascript..."
+osascript -e 'tell application "System Events" to get name of first process' >/dev/null 2>&1 || {
+    echo ""
+    echo "Accessibility access is required so the script can read Spotify / browser tabs."
+    echo "Opening System Settings → Privacy & Security → Accessibility..."
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    echo "Add Terminal (or iTerm) to the list, enable it, then re-run this installer."
+    echo ""
+    read -p "Press Enter after you have granted Accessibility access..."
+}
 
-echo "Starting the background updater now..."
+pkill -f "push_music.sh" 2>/dev/null || true
+sleep 1
+echo "Starting background updater..."
 nohup "$INSTALL_DIR/push_music.sh" > "$INSTALL_DIR/push.log" 2>&1 &
 disown
-
 sleep 1
+
 echo ""
 echo "======================================================"
-echo "Done! Running in the background (PID $!)."
+echo "Done. Background pusher is running."
 echo ""
-echo "To check status:   cat $INSTALL_DIR/music.json"
-echo "To check backend:  curl $MUSIC_URL"
-echo "To stop it later:  pkill -f push_music.sh"
+echo "Check local JSON:  cat $INSTALL_DIR/music.json"
+echo "Check backend:     curl $MUSIC_URL"
+echo "Stop later:        pkill -f push_music.sh"
+echo "Log:               tail -f $INSTALL_DIR/push.log"
 echo ""
-echo "In Roblox, run this loadstring (no changes needed, since the URL"
-echo "is baked into overlay.lua once you set it there):"
+echo "In Roblox (with any executor), paste this once:"
 echo ""
-echo 'loadstring(game:HttpGet("https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main/overlay.lua"))()'
+echo "loadstring(game:HttpGet(\"$OVERLAY_RAW\"))()"
 echo "======================================================"

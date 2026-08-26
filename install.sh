@@ -5,6 +5,7 @@ INSTALL_DIR="$HOME/spotify-overlay-app"
 
 pkill -f "kitty123-app" 2>/dev/null || true
 pkill -f "Electron" 2>/dev/null || true
+pkill -f "player.html" 2>/dev/null || true
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
@@ -18,23 +19,24 @@ cat > kitty123.app/Contents/MacOS/applet << 'APPLETEOF'
 #!/bin/bash
 INSTALL_DIR="$HOME/spotify-overlay-app"
 
-# Creating background layout state logic using native system frameworks
-osascript -e '
-on run
-    repeat
-        set isRobloxRunning to false
-        set spotifyData to "Offline"
-        
+while true; do
+    IS_ROBLOX=$(osascript -e '
         tell application "System Events"
             try
                 set frontApp to name of first application process whose frontmost is true
                 if frontApp contains "Roblox" or frontApp contains "RobloxPlayer" then
-                    set isRobloxRunning to true
+                    return "true"
+                else
+                    return "false"
                 end if
+            on error
+                return "false"
             end try
         end tell
-        
-        if isRobloxRunning then
+    ')
+
+    if [ "$IS_ROBLOX" = "true" ]; then
+        SPOTIFY_DATA=$(osascript -e '
             if application "Spotify" is running then
                 tell application "Spotify"
                     try
@@ -44,25 +46,33 @@ on run
                         set totalDur to (duration of cTrack) div 1000
                         set playerPos to player position as integer
                         set pState to player state as string
-                        set spotifyData to trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState
+                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState
                     on error
-                        set spotifyData to "No Track"
+                        return "No Track"
                     end try
                 end tell
             else
-                set spotifyData to "No Track"
-            endif
-        endif
+                return "No Track"
+            end if
+        ')
         
-        try
-            do shell script "echo " & quoted form of spotifyData & " > " & quoted form of (POSIX path of (path to home folder from user domain) & "spotify-overlay-app/state.txt")
-        end try
-        delay 0.5
-    end repeat
-end run
-' &
+        # Pure Bash mapping loop extraction checking your native user music library folder
+        SPOTIFY_CACHE="$HOME/Library/Caches/com.spotify.client/Data"
+        LATEST_ARTWORK=""
+        if [ -d "$SPOTIFY_CACHE" ]; then
+            LATEST_ARTWORK=$(find "$SPOTIFY_CACHE" -type f -name "*.file" -o -name "*.png" -o -name "*.jpg" 2>/dev/null | xargs stat -f "%m %N" 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+            if [ -n "$LATEST_ARTWORK" ]; then
+                cp "$LATEST_ARTWORK" "$INSTALL_DIR/current_art.png" 2>/dev/null || true
+            fi
+        fi
 
-# Native browser engine component execution loop mapping directly to your player layer coordinates
+        echo "$SPOTIFY_DATA" > "$INSTALL_DIR/state.txt"
+    else
+        echo "Offline" > "$INSTALL_DIR/state.txt"
+    fi
+    sleep 0.4
+done &
+
 /System/Library/Frameworks/WebKit.framework/Versions/Current/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent --url "file://$INSTALL_DIR/player.html" >/dev/null 2>&1 &
 APPLETEOF
 chmod +x kitty123.app/Contents/MacOS/applet
@@ -83,9 +93,10 @@ cat > "$INSTALL_DIR/player.html" << 'HTMLEOF'
 html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none;-webkit-user-select:none}
 body{display:flex;align-items:center;justify-content:center}
 .shell{
-    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.92);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.5);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative
+    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.92);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.5);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;margin-top:1300px
 }
-.artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
+.artbox{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0;overflow:hidden}
+.artbox img{width:100%;height:100%;object-fit:cover}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px;position:relative}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
 .artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
@@ -102,7 +113,7 @@ body{display:flex;align-items:center;justify-content:center}
 </head>
 <body>
 <div class="shell">
-  <div class="artph">♪</div>
+  <div class="artbox" id="albumArtBox">🎵</div>
   <div class="meta">
     <div class="track" id="track">Open Roblox...</div>
     <div class="artist" id="artist"></div>
@@ -111,9 +122,9 @@ body{display:flex;align-items:center;justify-content:center}
     </div>
     <div class="row">
       <div class="btns">
-        <span onclick="runCmd('prev')">|<</span>
+        <span onclick="runCmd('previous track')">|<</span>
         <span onclick="runCmd('playpause')" id="btnPP">||</span>
-        <span onclick="runCmd('next')">>|</span>
+        <span onclick="runCmd('next track')">>|</span>
       </div>
       <div class="progress-wrap">
         <div class="bar-bg" id="progressBg" onclick="scrubSong(event)"><div class="bar-fill" id="fill"></div></div>
@@ -123,7 +134,7 @@ body{display:flex;align-items:center;justify-content:center}
   </div>
 </div>
 <script>
-let total=1,pos=0,playing=false;
+let total=1,pos=0,playing=false,lastTrack="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 
 function updateUI(track, artist, duration, position, status) {
@@ -131,15 +142,19 @@ function updateUI(track, artist, duration, position, status) {
     document.getElementById("artist").textContent = artist;
     total = Math.max(1, Number(duration));
     pos = Math.max(0, Number(position));
-    playing = status === "playing";
+    playing = status.toLowerCase() === "playing";
     document.getElementById("btnPP").textContent = playing ? "||" : "|>";
     
-    const r = total > 0 ? min(1, pos / total) : 0;
+    if(track !== lastTrack) {
+        lastTrack = track;
+        document.getElementById("albumArtBox").innerHTML = `<img src="current_art.png?t=${Date.now()}" onerror="this.parentElement.innerHTML='🎵'" />`;
+    }
+    
+    const r = total > 0 ? Math.min(1, pos / total) : 0;
     document.getElementById("fill").style.width = (r * 100) + "%";
     document.getElementById("tCur").textContent = fmt(pos);
     document.getElementById("tTot").textContent = fmt(total);
     
-    // Dynamic color tuning matching color targets like Gabriela (KATSEYE)
     const isGabriela = track.toLowerCase().includes("gabriela") || artist.toLowerCase().includes("katseye");
     const activeColor = isGabriela ? "rgb(230, 40, 40)" : "#fff";
     
@@ -154,16 +169,18 @@ function updateUI(track, artist, duration, position, status) {
 }
 
 function runCmd(action) {
-    let script = 'tell application "Spotify" to ' + action;
-    if (action === 'playpause') script = 'tell application "Spotify" to playpause';
-    window.location.href = "applescript://run?code=" + encodeURIComponent(script);
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", "applescript://run?code=" + encodeURIComponent('tell application "Spotify" to ' + action), true);
+    xhr.send();
 }
 
 function scrubSong(e) {
     const rect = document.getElementById('progressBg').getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const targetSeconds = Math.floor(pct * total);
-    window.location.href = "applescript://run?code=" + encodeURIComponent('tell application "Spotify" to set player position to ' + targetSeconds);
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", "applescript://run?code=" + encodeURIComponent('tell application "Spotify" to set player position to ' + targetSeconds), true);
+    xhr.send();
 }
 
 setInterval(async () => {
@@ -175,7 +192,7 @@ setInterval(async () => {
             return;
         }
         const parts = txt.trim().split("||");
-        if (parts.length >= 5) updateUI(parts[0], parts[1], parts[2], parts[3], parts[4]);
+        if (parts.length >= 5) updateUI(parts, parts, parts, parts, parts);
     } catch(e) {}
 }, 400);
 </script>
@@ -200,8 +217,6 @@ cat > kitty123.app/Contents/Info.plist << 'PLISTEOF'
     <string>1.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
-    <key>LSUIElement</key>
-    <string>1</string>
 </dict>
 </plist>
 PLISTEOF
@@ -210,4 +225,3 @@ curl -fsSL "https://githubusercontent.com" -o kitty123.app/Contents/images/sourc
 cp kitty123.app/Contents/images/source.png kitty123.app/Contents/Resources/AppIcon.icns
 
 open kitty123.app
-echo "Done. Complete layout architecture generated."

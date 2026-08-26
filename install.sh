@@ -1,69 +1,27 @@
 #!/bin/bash
-
-set -euo pipefail
-
-C_RESET="\033[0m"
-C_BOLD="\033[1m"
-C_GREEN="\033[32m"
-C_RED="\033[31m"
-C_BLUE="\033[34m"
-C_CYAN="\033[36m"
+set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
-NODE_VERSION="v20.17.0"
 
-get_time() {
-    printf "%b" "${C_BLUE}kitty123${C_RESET}::${C_GREEN}[$(date +%H:%M:%S)]${C_RESET}"
-}
+echo "Setting up Spotify overlay..."
 
-log() {
-    printf "%b %b\n" "$(get_time)" "$1"
-}
-
-die() {
-    printf "%b ${C_RED}Error:${C_RESET} %b\n" "$(get_time)" "$1"
-    exit 1
-}
-
-detect_arch() {
-    local arch
-    arch=$(uname -m)
-    if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" == "1" ]]; then
-        arch="arm64"
-    fi
-    echo "$arch"
-}
-
-clear
-echo -e "${C_BOLD}${C_BLUE}kitty123 Universal Spotify Overlay Installer${C_RESET}"
-echo ""
-
-ARCH=$(detect_arch)
-log "System Architecture: ${C_BOLD}${ARCH}${C_RESET}"
-
+ARCH=$(uname -m)
 if ! command -v node &> /dev/null; then
-    log "Node.js environment missing. Downloading package installer..."
-    if [[ "$ARCH" == "arm64" ]]; then
-        NODE_URL="https://nodejs.org{NODE_VERSION}/node-${NODE_VERSION}.pkg"
+    if [ "$ARCH" == "arm64" ]; then
+        NODE_URL="https://nodejs.org"
     else
-        NODE_URL="https://nodejs.org{NODE_VERSION}/node-${NODE_VERSION}-x64.pkg"
+        NODE_URL="https://nodejs.org"
     fi
-    
     curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
-    log "${C_CYAN}Admin elevation required to attach runtime packages.${C_RESET}"
     sudo installer -pkg /tmp/node-installer.pkg -target /
     rm /tmp/node-installer.pkg
     export PATH="/usr/local/bin:$PATH"
 fi
 
-log "Node.js runtime active: $(node --version)"
-
 pkill -f "electron" 2>/dev/null || true
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
-
-log "Writing local configuration manifests..."
 
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 {
@@ -80,12 +38,15 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 PKGEOF
 
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, ipcMain } = require('electron');
 const path = require('path');
+const { exec } = require('child_process');
+
+let win;
 
 function createOverlayWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-    const win = new BrowserWindow({
+    win = new BrowserWindow({
         width: 480,
         height: 110,
         x: Math.floor((width - 480) / 2),
@@ -98,13 +59,75 @@ function createOverlayWindow() {
         skipTaskbar: true,
         webPreferences: {
             nodeIntegration: false,
-            contextIsolation: true
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
         }
     });
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setAlwaysOnTop(true, 'screen-saver', 1);
     win.setIgnoreMouseEvents(true, { forward: true });
     win.loadFile(path.join(__dirname, 'overlay.html'));
+
+    startAutomationLoops();
+}
+
+function startAutomationLoops() {
+    setInterval(() => {
+        if (!win || win.isDestroyed()) return;
+        
+        exec('osascript -e "get name of first application process whose frontmost is true"', (err, stdout) => {
+            if (err) return;
+            const activeApp = stdout.trim();
+            const isRobloxActive = activeApp.includes('Roblox') || activeApp.includes('RobloxPlayer');
+            
+            if (isRobloxActive) {
+                if (!win.isVisible()) win.showInactive();
+            } else {
+                if (win.isVisible()) win.hide();
+            }
+        });
+    }, 500);
+
+    setInterval(() => {
+        if (!win || win.isDestroyed() || !win.isVisible()) return;
+
+        const appleScript = `
+            if application "Spotify" is running then
+                tell application "Spotify"
+                    if player state is playing or player state is paused then
+                        set cTrack to current track
+                        set trackName to name of cTrack
+                        set artistName to artist of cTrack
+                        set totalDur to duration of cTrack
+                        set playerPos to player position
+                        set artworkUrl to artwork url of cTrack
+                        set pState to player state as string
+                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & artworkUrl & "||" & pState
+                    end if
+                end tell
+            end if
+            return "No Track"
+        `;
+
+        exec(`osascript -e '${appleScript}'`, (err, stdout) => {
+            if (err || !stdout || stdout.trim() === "No Track") {
+                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "" });
+                return;
+            }
+
+            const parts = stdout.trim().split('||');
+            if (parts.length >= 6) {
+                win.webContents.send('spotify-data', {
+                    track: parts[0],
+                    artist: parts[1],
+                    duration: Math.floor(Number(parts[2]) / 1000),
+                    position: Math.floor(Number(parts[3])),
+                    image: parts[4],
+                    status: parts[5].toLowerCase()
+                });
+            }
+        });
+    }, 1000);
 }
 
 app.whenReady().then(() => {
@@ -118,6 +141,14 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });
 APPEOF
+
+cat > "$INSTALL_DIR/preload.js" << 'PREEOF'
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+    onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value))
+});
+PREEOF
 
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
@@ -161,24 +192,35 @@ body{display:flex;align-items:center;justify-content:center}
   </div>
 </div>
 <script>
-const HOST="https://railway.app";
-const API=HOST+"/music";
 let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
-function apply(d){const track=d.track||"";if(track&&track!=="No Track Playing"){document.getElementById("track").textContent=track;document.getElementById("artist").textContent=d.artist||"Unknown Artist";total=Math.max(1,Number(d.duration)||1);pos=Math.max(0,Number(d.position)||0);if(pos>total)pos=total;playing=String(d.status||"").toLowerCase()==="playing";setArt(d.image||"")}else{document.getElementById("track").textContent="Spotify";document.getElementById("artist").textContent="No track playing";total=1;pos=0;playing=false;setArt("")}document.getElementById("pp").textContent=playing?"||":"|>";paint()}
 function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("dot").style.left=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
-async function poll(){try{const res=await fetch(API+"?t="+Date.now(),{cache:"no-store"});if(res.ok)apply(await res.json())}catch(e){document.getElementById("track").textContent="Offline";document.getElementById("artist").textContent="Check connection"}}
-setInterval(poll,1000);setInterval(()=>{if(playing&&total>1){pos=Math.min(total,pos+.25);paint()}},250);poll();
+
+window.electronAPI.onSpotifyData((d) => {
+    document.getElementById("track").textContent = d.track || "Spotify";
+    document.getElementById("artist").textContent = d.artist || "No track playing";
+    total = Math.max(1, Number(d.duration) || 1);
+    pos = Math.max(0, Number(d.position) || 0);
+    playing = d.status === "playing";
+    document.getElementById("pp").textContent = playing ? "||" : "|>";
+    setArt(d.image || "");
+    paint();
+});
+
+setInterval(() => {
+    if (playing && pos < total) {
+        pos = Math.min(total, pos + 0.25);
+        paint();
+    }
+}, 250);
 </script>
 </body>
 </html>
 HTMLEOF
 
-log "Installing package dependencies via npm..."
 npm install --silent
 
-log "Removing gatekeeper quarantine extensions and authorizing deep local code signatures..."
 xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
 codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
 
@@ -187,7 +229,4 @@ nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
 
 sleep 2
-log "Setup sequence complete."
-log "Application interface active."
-log "Always-on-top layout configuration finalized."
-echo ""
+echo "Done. Overlay is running and hooked to local Spotify and Roblox."

@@ -81,20 +81,18 @@ trap cleanup EXIT INT TERM
 
 banner
 
-spinner_start "preparing install..."
-sleep 0.4
-spinner_stop ok "ready"
+spinner_start "stopping old processes..."
+pkill -f "electron" 2>/dev/null || true
+sleep 0.7
+spinner_stop ok "old processes stopped"
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 spinner_start "cleaning previous install..."
-pkill -f "electron" 2>/dev/null || true
-sleep 0.6
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
-# Make sure no old username file exists
 rm -f "$INSTALL_DIR/username.txt"
-spinner_stop ok "cleaned"
+spinner_stop ok "clean"
 
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
@@ -172,6 +170,7 @@ async function spotifyGet(endpoint) {
 }
 
 function playUriQuiet(uri) {
+    // Best effort to keep the current app (Roblox) in front
     const script = `
         tell application "System Events"
             set frontApp to name of first application process whose frontmost is true
@@ -179,10 +178,16 @@ function playUriQuiet(uri) {
         tell application "Spotify"
             play track "${uri}"
         end tell
+        delay 0.25
+        tell application "System Events"
+            try
+                set frontmost of process frontApp to true
+            end try
+        end tell
         delay 0.2
         tell application "System Events"
             try
-                set frontmost of first process whose name is frontApp to true
+                set frontmost of process frontApp to true
             end try
         end tell
     `;
@@ -403,11 +408,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 PREEOF
 spinner_stop ok "preload.js written"
 
-spinner_start "writing icon..."
+spinner_start "writing icon + overlay.html..."
 echo "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAWklEQVQ4y2P4//8/AyUYGegETGg0gGgD0M0gWh9WDRDVAHQzSDYAXQ0w1gB0M8g2AN0MMNYAdDPINgDdDLL1YdUAUQ0g2gB0M4jWh1UDRDWAaAPQzSBaH8wAALw9GBl7N9GNAAAAAElFTkSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
-spinner_stop ok "icon ready"
 
-spinner_start "writing overlay.html..."
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -684,11 +687,12 @@ spinner_start "launching kitty123..."
 sleep 1
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
+sleep 1
 spinner_stop ok "kitty123 launched"
 
 echo ""
-printf "  ${C_GREEN}✔  All done${C_RESET}\n"
+printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
 echo ""
 log "Open the drawer (click the waves) → Playlists"
-log "You will now see the username input box"
+log "You will see the username box"
 echo ""

@@ -11,7 +11,7 @@ C_GRAY="\033[90m"
 get_time() {
     local s=""
     local mot="kitty123"
-    local couleurs=("255;235;100" "255;225;50" "255;215;0" "255;205;0" "255;195;0" "240;180;0" "230;170;0" "220;155;0" "210;140;0" "200;130;0")
+    local couleurs=("180;220;255" "150;200;255" "120;180;255" "90;160;255" "70;140;245" "50;120;230" "40;110;220" "30;100;210" "25;90;200" "20;80;190")
     for ((i=0; i<${#mot}; i++)); do
         s+="\033[38;2;${couleurs[$((i % ${#couleurs[@]}))]}m${mot:$i:1}"
     done
@@ -30,7 +30,7 @@ banner() {
     local line="────────────────────────────────────────────"
     echo ""
     printf "${C_GRAY}%s${C_RESET}\n" "$line"
-    printf "  %b  ${C_BOLD}Installer${C_RESET}\n" "$(printf "\033[38;2;255;215;0m%s\033[0m" "kitty123")"
+    printf "  %b  ${C_BOLD}Installer${C_RESET}\n" "$(printf "\033[38;2;120;180;255m%s\033[0m" "kitty123")"
     printf "${C_GRAY}%s${C_RESET}\n" "$line"
     echo ""
 }
@@ -79,14 +79,27 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Start ──
 banner
 
-spinner_start "preparing install..."
-sleep 0.8
-spinner_stop ok "ready"
+echo ""
+log "${C_CYAN}You need a free Spotify Developer app${C_RESET}"
+echo ""
+printf "  1. Go to ${C_BOLD}https://developer.spotify.com/dashboard${C_RESET}\n"
+printf "  2. Create an app (any name)\n"
+printf "  3. Add Redirect URI: ${C_BOLD}http://127.0.0.1:8888/callback${C_RESET}\n"
+printf "  4. Copy Client ID + Client Secret\n"
+echo ""
 
-log "${C_CYAN}installing kitty123 music overlay${C_RESET}"
+read -r -p "Paste Client ID: " CLIENT_ID
+read -r -p "Paste Client Secret: " CLIENT_SECRET
+
+if [[ -z "$CLIENT_ID" || -z "$CLIENT_SECRET" ]]; then
+    die "Client ID and Secret are required"
+fi
+
+spinner_start "preparing install..."
+sleep 0.5
+spinner_stop ok "ready"
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 spinner_start "cleaning previous install..."
@@ -96,6 +109,15 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 spinner_stop ok "cleaned"
 
+# Save credentials
+cat > "$INSTALL_DIR/config.json" << EOF
+{
+  "clientId": "$CLIENT_ID",
+  "clientSecret": "$CLIENT_SECRET",
+  "redirectUri": "http://127.0.0.1:8888/callback"
+}
+EOF
+
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 {
@@ -103,18 +125,145 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
   "version": "1.0.0",
   "main": "app.js",
   "scripts": { "start": "electron ." },
-  "devDependencies": { "electron": "^31.0.0" }
+  "devDependencies": { "electron": "^31.0.0" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "open": "^8.4.2",
+    "node-fetch": "^2.7.0"
+  }
 }
 PKGEOF
 spinner_stop ok "package.json written"
 
-spinner_start "writing app.js..."
+spinner_start "writing app.js (with Spotify API)..."
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { exec } = require('child_process');
+const express = require('express');
+const open = require('open');
+const fetch = require('node-fetch');
+
 let win;
 let tray = null;
+let accessToken = null;
+let refreshToken = null;
+let tokenExpires = 0;
+
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+const TOKEN_PATH = path.join(__dirname, 'tokens.json');
+const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+
+function loadTokens() {
+    try {
+        if (fs.existsSync(TOKEN_PATH)) {
+            const t = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+            accessToken = t.accessToken;
+            refreshToken = t.refreshToken;
+            tokenExpires = t.expires || 0;
+        }
+    } catch (e) {}
+}
+
+function saveTokens() {
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify({
+        accessToken,
+        refreshToken,
+        expires: tokenExpires
+    }, null, 2));
+}
+
+async function ensureToken() {
+    if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
+
+    if (refreshToken) {
+        try {
+            const res = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Authorization': 'Basic ' + Buffer.from(config.clientId + ':' + config.clientSecret).toString('base64')
+                },
+                body: new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    refresh_token: refreshToken
+                })
+            });
+            const data = await res.json();
+            if (data.access_token) {
+                accessToken = data.access_token;
+                tokenExpires = Date.now() + (data.expires_in * 1000);
+                if (data.refresh_token) refreshToken = data.refresh_token;
+                saveTokens();
+                return accessToken;
+            }
+        } catch (e) {}
+    }
+    return null;
+}
+
+function startAuthServer() {
+    return new Promise((resolve) => {
+        const server = express();
+        server.get('/callback', async (req, res) => {
+            const code = req.query.code;
+            if (!code) {
+                res.send('No code received');
+                return;
+            }
+            try {
+                const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Authorization': 'Basic ' + Buffer.from(config.clientId + ':' + config.clientSecret).toString('base64')
+                    },
+                    body: new URLSearchParams({
+                        grant_type: 'authorization_code',
+                        code,
+                        redirect_uri: config.redirectUri
+                    })
+                });
+                const data = await tokenRes.json();
+                if (data.access_token) {
+                    accessToken = data.access_token;
+                    refreshToken = data.refresh_token;
+                    tokenExpires = Date.now() + (data.expires_in * 1000);
+                    saveTokens();
+                    res.send('<h2 style="font-family:sans-serif;color:#1DB954">Success! You can close this tab and return to kitty123.</h2>');
+                    setTimeout(() => server.close(), 1000);
+                    resolve(true);
+                } else {
+                    res.send('Token error: ' + JSON.stringify(data));
+                    resolve(false);
+                }
+            } catch (e) {
+                res.send('Error: ' + e.message);
+                resolve(false);
+            }
+        });
+        server.listen(8888, () => {
+            const scopes = 'playlist-read-private playlist-read-collaborative user-library-read user-read-playback-state user-read-currently-playing';
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${config.clientId}&response_type=code&redirect_uri=${encodeURIComponent(config.redirectUri)}&scope=${encodeURIComponent(scopes)}`;
+            open(authUrl);
+        });
+    });
+}
+
+async function spotifyGet(endpoint) {
+    const token = await ensureToken();
+    if (!token) return null;
+    const res = await fetch('https://api.spotify.com/v1' + endpoint, {
+        headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (res.status === 401) {
+        accessToken = null;
+        return null;
+    }
+    if (!res.ok) return null;
+    return res.json();
+}
 
 function createOverlayWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -155,6 +304,7 @@ function startAutomationLoops() {
         });
     }, 250);
 
+    // Current track via AppleScript (works on Free + never forces focus)
     setInterval(() => {
         if (!win || win.isDestroyed() || !win.isVisible()) return;
         const appleScript = `
@@ -201,82 +351,112 @@ function startAutomationLoops() {
     }, 250);
 }
 
-ipcMain.on('spotify-control', (event, data) => {
-    let script = '';
-    if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
-    if (data.action === 'next') script = 'tell application "Spotify" to next track';
-    if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
-    if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
-    if (data.action === 'searchPlay') script = `tell application "Spotify" to play track "spotify:search:${encodeURIComponent(data.value)}"`;
-    if (data.action === 'playUri') script = `tell application "Spotify" to play track "${data.value}"`;
-    if (data.action === 'playPlaylist') script = `tell application "Spotify" to play track "${data.value}"`;
+ipcMain.on('spotify-control', async (event, data) => {
+    // Basic controls stay on AppleScript so they never force Spotify to front
+    if (['playpause','next','prev','scrub'].includes(data.action)) {
+        let script = '';
+        if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
+        if (data.action === 'next') script = 'tell application "Spotify" to next track';
+        if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
+        if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
+        if (script) exec(`osascript -e '${script}'`);
+        return;
+    }
+
+    if (data.action === 'playUri') {
+        exec(`osascript -e 'tell application "Spotify" to play track "${data.value}"'`);
+        return;
+    }
+
+    if (data.action === 'playPlaylist') {
+        exec(`osascript -e 'tell application "Spotify" to play track "${data.value}"'`);
+        return;
+    }
+
     if (data.action === 'getRealPlaylists') {
-        const fetchScript = `
-            if application "Spotify" is running then
-                tell application "Spotify"
-                    set out to ""
-                    try
-                        set allPlaylists to playlists
-                        repeat with pl in allPlaylists
-                            try
-                                set plName to name of pl
-                                set plId to id of pl
-                                set out to out & plName & "::" & plId & "||"
-                            end try
-                        end repeat
-                    on error
-                        try
-                            set allPlaylists to bookmarks of folder "Playlists" of library
-                            repeat with pl in allPlaylists
-                                try
-                                    set plName to name of pl
-                                    set plId to id of pl
-                                    set out to out & plName & "::" & plId & "||"
-                                end try
-                            end repeat
-                        end try
-                    end try
-                    return out
-                end tell
-            end if
-            return ""
-        `;
-        exec(`osascript -e '${fetchScript}'`, (err, stdout) => {
-            if (err || !stdout) { win.webContents.send('playlists-reply', []); return; }
-            const list = stdout.trim().split('||').filter(Boolean).map(p => {
-                const parts = p.split('::');
-                return { title: parts[0], id: parts[1], isPlaylist: true };
-            });
-            win.webContents.send('playlists-reply', list);
-        });
+        const token = await ensureToken();
+        if (!token) {
+            win.webContents.send('playlists-reply', []);
+            return;
+        }
+        try {
+            let all = [];
+            let url = '/me/playlists?limit=50';
+            while (url) {
+                const res = await spotifyGet(url);
+                if (!res || !res.items) break;
+                all = all.concat(res.items.map(p => ({
+                    title: p.name,
+                    id: p.uri,
+                    isPlaylist: true,
+                    image: (p.images && p.images[0]) ? p.images[0].url : null
+                })));
+                url = res.next ? res.next.replace('https://api.spotify.com/v1', '') : null;
+            }
+            // also add Liked Songs
+            all.unshift({ title: 'Liked Songs', id: 'spotify:user:spotify:playlist:37i9dQZF1DX4sWSpwq3LiO', isPlaylist: true });
+            win.webContents.send('playlists-reply', all);
+        } catch (e) {
+            win.webContents.send('playlists-reply', []);
+        }
         return;
     }
+
     if (data.action === 'getPlaylistTracks') {
-        const fetchTracks = `
-            tell application "Spotify"
-                set out to ""
-                try
-                    set trackList to tracks of playlist id "${data.value}"
-                    repeat with t in trackList
-                        try
-                            set out to out & name of t & "::" & artist of t & "::" & id of t & "||"
-                        end try
-                    end repeat
-                end try
-                return out
-            end tell
-        `;
-        exec(`osascript -e '${fetchTracks}'`, (err, stdout) => {
-            if (err || !stdout) { win.webContents.send('tracks-reply', []); return; }
-            const tracks = stdout.trim().split('||').filter(Boolean).map(t => {
-                const parts = t.split('::');
-                return { title: parts[0], artist: parts[1], id: parts[2] };
-            });
-            win.webContents.send('tracks-reply', tracks);
-        });
+        const token = await ensureToken();
+        if (!token) {
+            win.webContents.send('tracks-reply', []);
+            return;
+        }
+        try {
+            // extract playlist id from uri
+            let playlistId = data.value;
+            if (playlistId.includes(':')) playlistId = playlistId.split(':').pop();
+            let all = [];
+            let url = `/playlists/${playlistId}/tracks?limit=100`;
+            while (url) {
+                const res = await spotifyGet(url);
+                if (!res || !res.items) break;
+                all = all.concat(res.items.filter(i => i.track).map(i => ({
+                    title: i.track.name,
+                    artist: i.track.artists.map(a => a.name).join(', '),
+                    id: i.track.uri,
+                    image: (i.track.album && i.track.album.images && i.track.album.images[0]) ? i.track.album.images[0].url : null
+                })));
+                url = res.next ? res.next.replace('https://api.spotify.com/v1', '') : null;
+            }
+            win.webContents.send('tracks-reply', all);
+        } catch (e) {
+            win.webContents.send('tracks-reply', []);
+        }
         return;
     }
-    if (script) exec(`osascript -e '${script}'`, (err) => { if (err) console.log(err); });
+
+    if (data.action === 'search') {
+        const token = await ensureToken();
+        if (!token) {
+            win.webContents.send('search-reply', []);
+            return;
+        }
+        try {
+            const q = encodeURIComponent(data.value);
+            const res = await spotifyGet(`/search?q=${q}&type=track&limit=20`);
+            if (!res || !res.tracks) {
+                win.webContents.send('search-reply', []);
+                return;
+            }
+            const tracks = res.tracks.items.map(t => ({
+                title: t.name,
+                artist: t.artists.map(a => a.name).join(', '),
+                id: t.uri,
+                image: (t.album && t.album.images && t.album.images[0]) ? t.album.images[0].url : null
+            }));
+            win.webContents.send('search-reply', tracks);
+        } catch (e) {
+            win.webContents.send('search-reply', []);
+        }
+        return;
+    }
 });
 
 ipcMain.on('resize-window', (event, bounds) => {
@@ -288,9 +468,25 @@ ipcMain.on('resize-window', (event, bounds) => {
     }, true);
 });
 
-app.whenReady().then(() => {
+ipcMain.on('start-auth', async () => {
+    const ok = await startAuthServer();
+    if (ok && win && !win.isDestroyed()) {
+        win.webContents.send('auth-success');
+    }
+});
+
+app.whenReady().then(async () => {
+    loadTokens();
     createOverlayWindow();
     createTrayMenu();
+
+    // if no token yet, trigger auth
+    if (!accessToken) {
+        setTimeout(() => {
+            if (win && !win.isDestroyed()) win.webContents.send('need-auth');
+        }, 1500);
+    }
+
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOverlayWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
@@ -304,7 +500,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value)),
     onPlaylistsReply: (callback) => ipcRenderer.on('playlists-reply', (_event, value) => callback(value)),
     onTracksReply: (callback) => ipcRenderer.on('tracks-reply', (_event, value) => callback(value)),
+    onSearchReply: (callback) => ipcRenderer.on('search-reply', (_event, value) => callback(value)),
+    onNeedAuth: (callback) => ipcRenderer.on('need-auth', () => callback()),
+    onAuthSuccess: (callback) => ipcRenderer.on('auth-success', () => callback()),
     sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
+    startAuth: () => ipcRenderer.send('start-auth'),
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
 PREEOF
@@ -339,9 +539,9 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff;transition:width 0.1s linear}
 .times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
 .island-waves{-webkit-app-region:no-drag;position:absolute;right:8px;top:6px;display:flex;align-items:flex-end;gap:3px;height:22px;width:48px;justify-content:flex-end;cursor:pointer;z-index:10}
-.wave-bar{width:3px;height:6px;border-radius:2px;transition:height 0.12s ease-in-out,background 0.3s ease;background:linear-gradient(180deg,#ff007f,#7f00ff,#00f0ff)}
+.wave-bar{width:3px;height:6px;border-radius:2px;transition:height 0.12s ease-in-out,background 0.3s ease;background:linear-gradient(180deg,#78b4ff,#4a90e2,#2a6fd6)}
 .drawer{-webkit-app-region:no-drag;width:450px;height:0px;border-radius:18px;background:rgba(16,16,19,.92);border:0px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column;overflow:hidden;transition:all 0.25s ease-in-out;opacity:0}
-.drawer.open{height:240px;border:1px solid rgba(255,255,255,.22);opacity:1;padding:12px}
+.drawer.open{height:260px;border:1px solid rgba(255,255,255,.22);opacity:1;padding:12px}
 .search-box{width:100%;padding:8px 12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;outline:none;font-size:12px;margin-bottom:12px}
 .search-box::placeholder{color:rgba(255,255,255,.4)}
 .nav-tabs{display:flex;gap:14px;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:6px;margin-bottom:10px}
@@ -359,6 +559,7 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .play-btn{-webkit-app-region:no-drag;color:rgb(30,215,96);font-size:14px;font-weight:bold;padding:4px 8px;cursor:pointer;border-radius:4px;flex-shrink:0}
 .play-btn:hover{background:rgba(30,215,96,.15)}
 .search-hint{color:rgba(255,255,255,.4);font-size:11px;text-align:center;padding:20px 10px}
+.auth-banner{background:rgba(30,215,96,.15);border:1px solid rgba(30,215,96,.4);border-radius:8px;padding:10px;margin-bottom:10px;text-align:center;color:#1DB954;font-size:12px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -386,6 +587,7 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
   </div>
 </div>
 <div class="drawer" id="extendedDrawer">
+  <div id="authBanner" class="auth-banner" style="display:none">Click here to connect your Spotify account</div>
   <input type="text" class="search-box" id="searchBox" placeholder="Search songs or artists..." />
   <div class="nav-tabs" id="drawerTabs">
     <div class="tab active" id="tabPlaylists">Playlists</div>
@@ -398,8 +600,9 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 <canvas id="colorCanvas" style="display:none;" width="10" height="10"></canvas>
 <script>
 let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false,viewingPlaylist=false;
-let recentTracksMemory=[],loadedPlaylistsMemory=[],currentGradient="linear-gradient(180deg,#ff007f,#7f00ff,#00f0ff)";
+let recentTracksMemory=[],loadedPlaylistsMemory=[],currentGradient="linear-gradient(180deg,#78b4ff,#4a90e2,#2a6fd6)";
 const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
+
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function updateWaveColors(r,g,b){
     const r2=Math.min(255,r+40),g2=Math.min(255,g+30),b2=Math.min(255,b+50);
@@ -434,7 +637,7 @@ function paint(){
     document.getElementById("tTot").textContent=fmt(total);
 }
 function updateWindowBounds(){
-    let targetW=Math.floor(480*baseScale),targetH=Math.floor((drawerOpen?360:110)*baseScale);
+    let targetW=Math.floor(480*baseScale),targetH=Math.floor((drawerOpen?380:110)*baseScale);
     document.getElementById("playerShell").style.width=`${Math.floor(450*baseScale)}px`;
     document.getElementById("playerShell").style.height=`${Math.floor(80*baseScale)}px`;
     document.getElementById("extendedDrawer").style.width=`${Math.floor(450*baseScale)}px`;
@@ -459,6 +662,7 @@ function populateList(items){
         container.appendChild(row);
     });
 }
+
 document.getElementById('backBtn').addEventListener('click',()=>{viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';populateList(loadedPlaylistsMemory)});
 document.getElementById('islandWaves').addEventListener('click',()=>{
     drawerOpen=!drawerOpen;const dr=document.getElementById("extendedDrawer");
@@ -468,16 +672,51 @@ document.getElementById('islandWaves').addEventListener('click',()=>{
 });
 document.getElementById('art').addEventListener('click',()=>{baseScale=baseScale===1.0?1.25:(baseScale===1.25?0.85:1.0);updateWindowBounds()});
 document.getElementById('artPh').addEventListener('click',()=>{baseScale=baseScale===1.0?1.25:(baseScale===1.25?0.85:1.0);updateWindowBounds()});
-document.getElementById('tabPlaylists').addEventListener('click',e=>{document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';window.electronAPI.sendControl('getRealPlaylists')});
-document.getElementById('tabRecents').addEventListener('click',e=>{document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';populateList(recentTracksMemory)});
-document.getElementById('tabSearch').addEventListener('click',e=>{document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';document.getElementById('listContainer').innerHTML=`<div class="search-hint">Type in the search box above and press Enter to play</div>`;document.getElementById('searchBox').focus()});
-window.electronAPI.onPlaylistsReply(playlists=>{loadedPlaylistsMemory=playlists;if(document.getElementById('tabPlaylists').classList.contains('active')&&!viewingPlaylist)populateList(playlists)});
+
+document.getElementById('tabPlaylists').addEventListener('click',e=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
+    viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
+    window.electronAPI.sendControl('getRealPlaylists');
+});
+document.getElementById('tabRecents').addEventListener('click',e=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
+    viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
+    populateList(recentTracksMemory);
+});
+document.getElementById('tabSearch').addEventListener('click',e=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');
+    viewingPlaylist=false;document.getElementById('backBtn').style.display='none';document.getElementById('drawerTabs').style.display='flex';
+    document.getElementById('listContainer').innerHTML=`<div class="search-hint">Type a song or artist and press Enter</div>`;
+    document.getElementById('searchBox').focus();
+});
+
+window.electronAPI.onPlaylistsReply(playlists=>{
+    loadedPlaylistsMemory=playlists;
+    if(document.getElementById('tabPlaylists').classList.contains('active')&&!viewingPlaylist)populateList(playlists);
+});
 window.electronAPI.onTracksReply(tracks=>{if(viewingPlaylist)populateList(tracks)});
-document.getElementById('searchBox').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){window.electronAPI.sendControl('searchPlay',e.target.value);e.target.value=""}});
+window.electronAPI.onSearchReply(tracks=>{populateList(tracks)});
+
+document.getElementById('searchBox').addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&e.target.value.trim()){
+        window.electronAPI.sendControl('search',e.target.value);
+        document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+        document.getElementById('tabSearch').classList.add('active');
+    }
+});
+
 document.getElementById('btnPrev').addEventListener('click',()=>window.electronAPI.sendControl('prev'));
 document.getElementById('btnPP').addEventListener('click',()=>window.electronAPI.sendControl('playpause'));
 document.getElementById('btnNext').addEventListener('click',()=>window.electronAPI.sendControl('next'));
-document.getElementById('progressBg').addEventListener('click',e=>{const rect=e.currentTarget.getBoundingClientRect();const clickX=e.clientX-rect.left;const percentage=Math.max(0,Math.min(1,clickX/rect.width));const targetSeconds=Math.floor(percentage*total);pos=targetSeconds;paint();window.electronAPI.sendControl('scrub',targetSeconds)});
+document.getElementById('progressBg').addEventListener('click',e=>{
+    const rect=e.currentTarget.getBoundingClientRect();
+    const clickX=e.clientX-rect.left;
+    const percentage=Math.max(0,Math.min(1,clickX/rect.width));
+    const targetSeconds=Math.floor(percentage*total);
+    pos=targetSeconds;paint();
+    window.electronAPI.sendControl('scrub',targetSeconds);
+});
+
 window.electronAPI.onSpotifyData(d=>{
     document.getElementById("track").textContent=d.track||"Spotify";
     document.getElementById("artist").textContent=d.artist||"No track playing";
@@ -492,6 +731,18 @@ window.electronAPI.onSpotifyData(d=>{
         if(recentTracksMemory.length>20)recentTracksMemory.pop();
     }
 });
+
+window.electronAPI.onNeedAuth(()=>{
+    document.getElementById('authBanner').style.display='block';
+});
+window.electronAPI.onAuthSuccess(()=>{
+    document.getElementById('authBanner').style.display='none';
+    window.electronAPI.sendControl('getRealPlaylists');
+});
+document.getElementById('authBanner').addEventListener('click',()=>{
+    window.electronAPI.startAuth();
+});
+
 setInterval(()=>{if(playing&&pos<total){pos=Math.min(total,pos+0.1);paint()}},100);
 const bars=document.querySelectorAll('.wave-bar');
 setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Math.random()*18)+4)+'px'}else{bar.style.height='5px'}bar.style.background=currentGradient})},140);
@@ -501,18 +752,21 @@ setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Mat
 HTMLEOF
 spinner_stop ok "overlay.html written"
 
-spinner_start "installing electron..."
+spinner_start "installing dependencies..."
 npm install --silent
 xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
 codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
-spinner_stop ok "electron installed"
+spinner_stop ok "dependencies installed"
 
 spinner_start "launching kitty123..."
-sleep 0.6
+sleep 0.5
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
 spinner_stop ok "kitty123 launched"
 
 echo ""
-printf "  ${C_GREEN}✔ ${C_RESET}\n"
+printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
+echo ""
+log "A browser window will open so you can log in to Spotify."
+log "After you approve, your real playlists + search will work."
 echo ""

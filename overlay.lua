@@ -1,4 +1,3 @@
--- Meow :3333
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -54,6 +53,7 @@ albumArt.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
 albumArt.BackgroundTransparency = 0.2
 albumArt.BorderSizePixel = 0
 albumArt.Image = "rbxassetid://10048101484"
+albumArt.ScaleType = Enum.ScaleType.Crop
 albumArt.Parent = mainFrame
 local albumCorner = Instance.new("UICorner")
 albumCorner.CornerRadius = UDim.new(0, 12)
@@ -119,7 +119,6 @@ local progressBarFill = Instance.new("Frame")
 progressBarFill.Name = "ProgressBarFill"
 progressBarFill.Size = UDim2.new(0, 0, 1, 0)
 progressBarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-progressBarFill.BackgroundTransparency = 0
 progressBarFill.BorderSizePixel = 0
 progressBarFill.Parent = progressBarBg
 local fillCorner = Instance.new("UICorner")
@@ -158,9 +157,10 @@ timeTotal.TextXAlignment = Enum.TextXAlignment.Right
 timeTotal.Text = "0:00"
 timeTotal.Parent = mainFrame
 local customRequest = customRequest or http_request or request or (syn and syn.request) or (http and http.request)
+local hasFileFunctions = writefile and getcustomasset
 local function formatTime(seconds)
 	if not seconds or seconds < 0 then return "0:00" end
-	seconds = math.floor(seconds)
+	seconds = math.floor(seconds + 0.5)
 	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 local TOTAL_SECONDS = 1
@@ -169,7 +169,8 @@ local targetSeconds = 0
 local isDragging = false
 local isPlaying = false
 local appOnline = true
-local LERP_SPEED = 18
+local LERP_SPEED = 12
+local lastImageUrl = nil
 sliderCircle.MouseEnter:Connect(function()
 	if isPlaying and appOnline then
 		TweenService:Create(sliderCircle, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -188,8 +189,7 @@ local function getRatioFromMouse()
 	local absolutePosition = progressBarBg.AbsolutePosition.X
 	local absoluteSize = progressBarBg.AbsoluteSize.X
 	local mousePosition = UserInputService:GetMouseLocation().X
-	local relativeX = mousePosition - absolutePosition
-	return math.clamp(relativeX / absoluteSize, 0, 1)
+	return math.clamp((mousePosition - absolutePosition) / absoluteSize, 0, 1)
 end
 sliderCircle.MouseButton1Down:Connect(function()
 	if isPlaying and appOnline then
@@ -199,6 +199,7 @@ end)
 UserInputService.InputChanged:Connect(function(input)
 	if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 		targetSeconds = getRatioFromMouse() * TOTAL_SECONDS
+		currentSeconds = targetSeconds
 	end
 end)
 UserInputService.InputEnded:Connect(function(input)
@@ -214,10 +215,7 @@ end)
 local function sendControl(action)
 	task.spawn(function()
 		pcall(function()
-			customRequest({
-				Url = controlUrl .. action,
-				Method = "POST",
-			})
+			customRequest({ Url = controlUrl .. action, Method = "POST" })
 		end)
 	end)
 end
@@ -236,25 +234,36 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	timeTotal.Visible = appOnline
 	playPauseBtn.Text = isPlaying and "||" or "|>"
 	if not isDragging and isPlaying and appOnline and TOTAL_SECONDS > 1 then
-		if targetSeconds < TOTAL_SECONDS then
-			targetSeconds = targetSeconds + deltaTime
-		end
+		targetSeconds = math.min(targetSeconds + deltaTime, TOTAL_SECONDS)
 	end
 	currentSeconds = currentSeconds + (targetSeconds - currentSeconds) * math.clamp(deltaTime * LERP_SPEED, 0, 1)
-	local ratio = 0
-	if TOTAL_SECONDS > 0 then
-		ratio = math.clamp(currentSeconds / TOTAL_SECONDS, 0, 1)
-	end
+	local ratio = TOTAL_SECONDS > 0 and math.clamp(currentSeconds / TOTAL_SECONDS, 0, 1) or 0
 	local halfDotSize = sliderCircle.Size.X.Offset / 2
 	progressBarFill.Size = UDim2.new(ratio, 0, 1, 0)
 	sliderCircle.Position = UDim2.new(ratio, -halfDotSize, 0.5, -halfDotSize)
 	timeCurrent.Text = formatTime(currentSeconds)
 	timeTotal.Text = formatTime(TOTAL_SECONDS)
 end)
+local function tryLoadAlbumArt(imageUrl)
+	if not imageUrl or imageUrl == "" or imageUrl == lastImageUrl then return end
+	if not hasFileFunctions then return end
+	task.spawn(function()
+		local ok, imgResponse = pcall(function()
+			return customRequest({ Url = imageUrl, Method = "GET" })
+		end)
+		if ok and imgResponse and imgResponse.Body then
+			local writeOk = pcall(function()
+				writefile("spotify_overlay_art.png", imgResponse.Body)
+				albumArt.Image = getcustomasset("spotify_overlay_art.png")
+			end)
+			if writeOk then
+				lastImageUrl = imageUrl
+			end
+		end
+	end)
+end
 local function splitTitleArtist(raw)
-	if not raw or raw == "" then
-		return "No Track Playing", ""
-	end
+	if not raw or raw == "" then return "No Track Playing", "" end
 	local track, artist = raw:match("^(.-)%s*[·•|]%s*(.+)$")
 	if track and artist then return track, artist end
 	track, artist = raw:match("^(.-)%s+%-%s+(.+)$")
@@ -288,18 +297,23 @@ task.spawn(function()
 				end
 				if trackName and trackName ~= "" and trackName ~= "No Track Playing" then
 					trackLabel.Text = trackName
-					artistLabel.Text = (artistName ~= "" and artistName) or "Unknown Artist"
+					artistLabel.Text = artistName ~= "" and artistName or "Unknown Artist"
 					local newDuration = tonumber(result.duration) or 1
 					local newPosition = tonumber(result.position) or 0
 					if newDuration < 1 then newDuration = 1 end
 					if newPosition < 0 then newPosition = 0 end
 					if newPosition > newDuration then newPosition = newDuration end
-					if newDuration ~= TOTAL_SECONDS or math.abs(newPosition - targetSeconds) > 2.5 then
-						currentSeconds = newPosition
-						targetSeconds = newPosition
-					end
 					TOTAL_SECONDS = newDuration
+					if not isDragging then
+						targetSeconds = newPosition
+						if math.abs(currentSeconds - newPosition) > 1.0 then
+							currentSeconds = newPosition
+						end
+					end
 					isPlaying = string.lower(tostring(result.status or "")) == "playing"
+					if result.image and result.image ~= "" then
+						tryLoadAlbumArt(result.image)
+					end
 				else
 					trackLabel.Text = "Spotify"
 					artistLabel.Text = "No track playing"
@@ -308,13 +322,6 @@ task.spawn(function()
 					targetSeconds = 0
 					currentSeconds = 0
 				end
-			else
-				trackLabel.Text = "Spotify"
-				artistLabel.Text = "No track playing"
-				isPlaying = false
-				TOTAL_SECONDS = 1
-				targetSeconds = 0
-				currentSeconds = 0
 			end
 		else
 			trackLabel.Text = "Offline (Net Error)"
@@ -322,6 +329,6 @@ task.spawn(function()
 			isPlaying = false
 			appOnline = false
 		end
-		task.wait(4)
+		task.wait(2)
 	end
 end)

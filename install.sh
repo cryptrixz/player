@@ -3,8 +3,8 @@ set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 
+pkill -f "kitty123-app" 2>/dev/null || true
 pkill -f "Electron" 2>/dev/null || true
-pkill -f "kitty123" 2>/dev/null || true
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
@@ -16,52 +16,54 @@ mkdir -p kitty123.app/Contents/images
 
 cat > kitty123.app/Contents/MacOS/applet << 'APPLETEOF'
 #!/bin/bash
+INSTALL_DIR="$HOME/spotify-overlay-app"
+
+# Creating background layout state logic using native system frameworks
 osascript -e '
 on run
     repeat
-        if application "Spotify" is running then
-            tell application "Spotify"
-                try
-                    if player state is playing then
-                        set trackName to name of current track
-                        set artistName to artist of current track
-                        set totalDur to (duration of current track) / 1000
-                        set currentPos to player position
-                        
-                        set minNum to (currentPos div 60) as string
-                        set secNum to (round (currentPos mod 60)) as string
-                        if length of secNum is 1 then set secNum to "0" & secNum
-                        
-                        set totMin to (totalDur div 60) as string
-                        set totSec to (round (totalDur mod 60)) as string
-                        if length of totSec is 1 then set totSec to "0" & totSec
-                        
-                        set displayString to "🎵 " & trackName & " - " & artistName & " [" & minNum & ":" & secNum & " / " & totMin & ":" & totSec & "]"
-                    else
-                        set displayString to "⏸️ Spotify Paused"
-                    end if
-                on error
-                    set displayString to "🎵 Spotify"
-                end try
-            end tell
-        else
-            set displayString to "Offline"
-        end if
+        set isRobloxRunning to false
+        set spotifyData to "Offline"
         
         tell application "System Events"
             try
-                set frontAppName to name of first application process whose frontmost is true
-                if frontAppName contains "Roblox" or frontAppName contains "RobloxPlayer" then
-                    if displayString is not "Offline" then
-                        display notification displayString with title "Kitty123 Overlay Player"
-                    end if
+                set frontApp to name of first application process whose frontmost is true
+                if frontApp contains "Roblox" or frontApp contains "RobloxPlayer" then
+                    set isRobloxRunning to true
                 end if
             end try
         end tell
-        delay 2
+        
+        if isRobloxRunning then
+            if application "Spotify" is running then
+                tell application "Spotify"
+                    try
+                        set cTrack to current track
+                        set trackName to name of cTrack
+                        set artistName to artist of cTrack
+                        set totalDur to (duration of cTrack) div 1000
+                        set playerPos to player position as integer
+                        set pState to player state as string
+                        set spotifyData to trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState
+                    on error
+                        set spotifyData to "No Track"
+                    end try
+                end tell
+            else
+                set spotifyData to "No Track"
+            endif
+        endif
+        
+        try
+            do shell script "echo " & quoted form of spotifyData & " > " & quoted form of (POSIX path of (path to home folder from user domain) & "spotify-overlay-app/state.txt")
+        end try
+        delay 0.5
     end repeat
 end run
 ' &
+
+# Native browser engine component execution loop mapping directly to your player layer coordinates
+/System/Library/Frameworks/WebKit.framework/Versions/Current/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent --url "file://$INSTALL_DIR/player.html" >/dev/null 2>&1 &
 APPLETEOF
 chmod +x kitty123.app/Contents/MacOS/applet
 
@@ -70,6 +72,116 @@ set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 cd "$INSTALL_DIR"
+
+cat > "$INSTALL_DIR/player.html" << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none;-webkit-user-select:none}
+body{display:flex;align-items:center;justify-content:center}
+.shell{
+    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.92);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.5);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative
+}
+.artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
+.meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px;position:relative}
+.track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.btns{display:flex;gap:12px;flex-shrink:0;color:#fff;font-size:14px;font-weight:700;cursor:pointer}
+.btns span:hover { color: rgb(30, 215, 96); }
+.progress-wrap{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
+.bar-fill{height:100%;width:0%;border-radius:2px;background:#fff;transition:width 0.2s linear}
+.times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
+.island-waves {position:absolute;right:0;top:4px;display:flex;align-items:center;gap:2px;height:20px;width:40px;justify-content:flex-end}
+.wave-bar {width:3px;height:4px;background-color:#fff;border-radius:1px}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="artph">♪</div>
+  <div class="meta">
+    <div class="track" id="track">Open Roblox...</div>
+    <div class="artist" id="artist"></div>
+    <div class="island-waves">
+      <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+    </div>
+    <div class="row">
+      <div class="btns">
+        <span onclick="runCmd('prev')">|<</span>
+        <span onclick="runCmd('playpause')" id="btnPP">||</span>
+        <span onclick="runCmd('next')">>|</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="bar-bg" id="progressBg" onclick="scrubSong(event)"><div class="bar-fill" id="fill"></div></div>
+        <div class="times"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let total=1,pos=0,playing=false;
+function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+
+function updateUI(track, artist, duration, position, status) {
+    document.getElementById("track").textContent = track;
+    document.getElementById("artist").textContent = artist;
+    total = Math.max(1, Number(duration));
+    pos = Math.max(0, Number(position));
+    playing = status === "playing";
+    document.getElementById("btnPP").textContent = playing ? "||" : "|>";
+    
+    const r = total > 0 ? min(1, pos / total) : 0;
+    document.getElementById("fill").style.width = (r * 100) + "%";
+    document.getElementById("tCur").textContent = fmt(pos);
+    document.getElementById("tTot").textContent = fmt(total);
+    
+    // Dynamic color tuning matching color targets like Gabriela (KATSEYE)
+    const isGabriela = track.toLowerCase().includes("gabriela") || artist.toLowerCase().includes("katseye");
+    const activeColor = isGabriela ? "rgb(230, 40, 40)" : "#fff";
+    
+    document.querySelectorAll('.wave-bar').forEach(bar => {
+        bar.style.backgroundColor = activeColor;
+        if (playing) {
+            bar.style.height = (Math.floor(Math.random() * 16) + 4) + 'px';
+        } else {
+            bar.style.height = '4px';
+        }
+    });
+}
+
+function runCmd(action) {
+    let script = 'tell application "Spotify" to ' + action;
+    if (action === 'playpause') script = 'tell application "Spotify" to playpause';
+    window.location.href = "applescript://run?code=" + encodeURIComponent(script);
+}
+
+function scrubSong(e) {
+    const rect = document.getElementById('progressBg').getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetSeconds = Math.floor(pct * total);
+    window.location.href = "applescript://run?code=" + encodeURIComponent('tell application "Spotify" to set player position to ' + targetSeconds);
+}
+
+setInterval(async () => {
+    try {
+        const res = await fetch('state.txt?t=' + Date.now());
+        const txt = await res.text();
+        if (txt.trim() === "Offline" || txt.trim() === "No Track") {
+            updateUI("Spotify", "No track playing", 1, 0, "paused");
+            return;
+        }
+        const parts = txt.trim().split("||");
+        if (parts.length >= 5) updateUI(parts[0], parts[1], parts[2], parts[3], parts[4]);
+    } catch(e) {}
+}, 400);
+</script>
+</body>
+</html>
+HTMLEOF
 
 cat > kitty123.app/Contents/Info.plist << 'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -98,4 +210,4 @@ curl -fsSL "https://githubusercontent.com" -o kitty123.app/Contents/images/sourc
 cp kitty123.app/Contents/images/source.png kitty123.app/Contents/Resources/AppIcon.icns
 
 open kitty123.app
-echo "Done. Native framework-free app setup completed successfully."
+echo "Done. Complete layout architecture generated."

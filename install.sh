@@ -82,19 +82,9 @@ trap cleanup EXIT INT TERM
 banner
 
 echo ""
-log "${C_CYAN}You need a free Spotify Developer app${C_RESET}"
-echo ""
-printf "  1. Go to ${C_BOLD}https://developer.spotify.com/dashboard${C_RESET}\n"
-printf "  2. Create an app (any name)\n"
-printf "  3. Add Redirect URI: ${C_BOLD}http://127.0.0.1:8888/callback${C_RESET}\n"
-printf "  4. Copy Client ID + Client Secret\n"
-echo ""
-
-read -r -p "Paste Client ID: " CLIENT_ID
-read -r -p "Paste Client Secret: " CLIENT_SECRET
-
-if [[ -z "$CLIENT_ID" || -z "$CLIENT_SECRET" ]]; then
-    die "Client ID and Secret are required"
+read -r -p "Enter your Spotify username: " SPOTIFY_USER
+if [[ -z "$SPOTIFY_USER" ]]; then
+    die "Username is required"
 fi
 
 spinner_start "preparing install..."
@@ -109,14 +99,8 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 spinner_stop ok "cleaned"
 
-# Save credentials
-cat > "$INSTALL_DIR/config.json" << EOF
-{
-  "clientId": "$CLIENT_ID",
-  "clientSecret": "$CLIENT_SECRET",
-  "redirectUri": "http://127.0.0.1:8888/callback"
-}
-EOF
+# Save the username the user just typed
+echo "$SPOTIFY_USER" > "$INSTALL_DIR/username.txt"
 
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
@@ -127,140 +111,64 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
   "scripts": { "start": "electron ." },
   "devDependencies": { "electron": "^31.0.0" },
   "dependencies": {
-    "express": "^4.19.2",
-    "open": "^8.4.2",
     "node-fetch": "^2.7.0"
   }
 }
 PKGEOF
 spinner_stop ok "package.json written"
 
-spinner_start "writing app.js (with Spotify API)..."
+spinner_start "writing app.js..."
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, shell } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
-const express = require('express');
-const open = require('open');
 const fetch = require('node-fetch');
 
 let win;
 let tray = null;
 let accessToken = null;
-let refreshToken = null;
 let tokenExpires = 0;
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-const TOKEN_PATH = path.join(__dirname, 'tokens.json');
-const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+const CLIENT_ID = "4119f479e60d4a049e3d384ec366dc65";
+const CLIENT_SECRET = "d7a0a39742f24c228af25e0b0ef56ef7";
+const USERNAME_PATH = path.join(__dirname, 'username.txt');
 
-function loadTokens() {
+function getUsername() {
     try {
-        if (fs.existsSync(TOKEN_PATH)) {
-            const t = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-            accessToken = t.accessToken;
-            refreshToken = t.refreshToken;
-            tokenExpires = t.expires || 0;
+        return fs.readFileSync(USERNAME_PATH, 'utf8').trim();
+    } catch (e) {
+        return null;
+    }
+}
+
+async function getToken() {
+    if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
+    try {
+        const res = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64')
+            },
+            body: 'grant_type=client_credentials'
+        });
+        const data = await res.json();
+        if (data.access_token) {
+            accessToken = data.access_token;
+            tokenExpires = Date.now() + (data.expires_in * 1000);
+            return accessToken;
         }
     } catch (e) {}
-}
-
-function saveTokens() {
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify({
-        accessToken,
-        refreshToken,
-        expires: tokenExpires
-    }, null, 2));
-}
-
-async function ensureToken() {
-    if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
-
-    if (refreshToken) {
-        try {
-            const res = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Authorization': 'Basic ' + Buffer.from(config.clientId + ':' + config.clientSecret).toString('base64')
-                },
-                body: new URLSearchParams({
-                    grant_type: 'refresh_token',
-                    refresh_token: refreshToken
-                })
-            });
-            const data = await res.json();
-            if (data.access_token) {
-                accessToken = data.access_token;
-                tokenExpires = Date.now() + (data.expires_in * 1000);
-                if (data.refresh_token) refreshToken = data.refresh_token;
-                saveTokens();
-                return accessToken;
-            }
-        } catch (e) {}
-    }
     return null;
 }
 
-function startAuthServer() {
-    return new Promise((resolve) => {
-        const server = express();
-        server.get('/callback', async (req, res) => {
-            const code = req.query.code;
-            if (!code) {
-                res.send('No code received');
-                return;
-            }
-            try {
-                const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Authorization': 'Basic ' + Buffer.from(config.clientId + ':' + config.clientSecret).toString('base64')
-                    },
-                    body: new URLSearchParams({
-                        grant_type: 'authorization_code',
-                        code,
-                        redirect_uri: config.redirectUri
-                    })
-                });
-                const data = await tokenRes.json();
-                if (data.access_token) {
-                    accessToken = data.access_token;
-                    refreshToken = data.refresh_token;
-                    tokenExpires = Date.now() + (data.expires_in * 1000);
-                    saveTokens();
-                    res.send('<h2 style="font-family:sans-serif;color:#1DB954">Success! You can close this tab and return to kitty123.</h2>');
-                    setTimeout(() => server.close(), 1000);
-                    resolve(true);
-                } else {
-                    res.send('Token error: ' + JSON.stringify(data));
-                    resolve(false);
-                }
-            } catch (e) {
-                res.send('Error: ' + e.message);
-                resolve(false);
-            }
-        });
-        server.listen(8888, () => {
-            const scopes = 'playlist-read-private playlist-read-collaborative user-library-read user-read-playback-state user-read-currently-playing';
-            const authUrl = `https://accounts.spotify.com/authorize?client_id=${config.clientId}&response_type=code&redirect_uri=${encodeURIComponent(config.redirectUri)}&scope=${encodeURIComponent(scopes)}`;
-            open(authUrl);
-        });
-    });
-}
-
 async function spotifyGet(endpoint) {
-    const token = await ensureToken();
+    const token = await getToken();
     if (!token) return null;
     const res = await fetch('https://api.spotify.com/v1' + endpoint, {
         headers: { 'Authorization': 'Bearer ' + token }
     });
-    if (res.status === 401) {
-        accessToken = null;
-        return null;
-    }
     if (!res.ok) return null;
     return res.json();
 }
@@ -304,7 +212,6 @@ function startAutomationLoops() {
         });
     }, 250);
 
-    // Current track via AppleScript (works on Free + never forces focus)
     setInterval(() => {
         if (!win || win.isDestroyed() || !win.isVisible()) return;
         const appleScript = `
@@ -352,7 +259,6 @@ function startAutomationLoops() {
 }
 
 ipcMain.on('spotify-control', async (event, data) => {
-    // Basic controls stay on AppleScript so they never force Spotify to front
     if (['playpause','next','prev','scrub'].includes(data.action)) {
         let script = '';
         if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
@@ -363,25 +269,20 @@ ipcMain.on('spotify-control', async (event, data) => {
         return;
     }
 
-    if (data.action === 'playUri') {
-        exec(`osascript -e 'tell application "Spotify" to play track "${data.value}"'`);
-        return;
-    }
-
-    if (data.action === 'playPlaylist') {
+    if (data.action === 'playUri' || data.action === 'playPlaylist') {
         exec(`osascript -e 'tell application "Spotify" to play track "${data.value}"'`);
         return;
     }
 
     if (data.action === 'getRealPlaylists') {
-        const token = await ensureToken();
-        if (!token) {
+        const username = getUsername();
+        if (!username) {
             win.webContents.send('playlists-reply', []);
             return;
         }
         try {
             let all = [];
-            let url = '/me/playlists?limit=50';
+            let url = `/users/${encodeURIComponent(username)}/playlists?limit=50`;
             while (url) {
                 const res = await spotifyGet(url);
                 if (!res || !res.items) break;
@@ -393,8 +294,6 @@ ipcMain.on('spotify-control', async (event, data) => {
                 })));
                 url = res.next ? res.next.replace('https://api.spotify.com/v1', '') : null;
             }
-            // also add Liked Songs
-            all.unshift({ title: 'Liked Songs', id: 'spotify:user:spotify:playlist:37i9dQZF1DX4sWSpwq3LiO', isPlaylist: true });
             win.webContents.send('playlists-reply', all);
         } catch (e) {
             win.webContents.send('playlists-reply', []);
@@ -403,13 +302,7 @@ ipcMain.on('spotify-control', async (event, data) => {
     }
 
     if (data.action === 'getPlaylistTracks') {
-        const token = await ensureToken();
-        if (!token) {
-            win.webContents.send('tracks-reply', []);
-            return;
-        }
         try {
-            // extract playlist id from uri
             let playlistId = data.value;
             if (playlistId.includes(':')) playlistId = playlistId.split(':').pop();
             let all = [];
@@ -433,11 +326,6 @@ ipcMain.on('spotify-control', async (event, data) => {
     }
 
     if (data.action === 'search') {
-        const token = await ensureToken();
-        if (!token) {
-            win.webContents.send('search-reply', []);
-            return;
-        }
         try {
             const q = encodeURIComponent(data.value);
             const res = await spotifyGet(`/search?q=${q}&type=track&limit=20`);
@@ -468,25 +356,9 @@ ipcMain.on('resize-window', (event, bounds) => {
     }, true);
 });
 
-ipcMain.on('start-auth', async () => {
-    const ok = await startAuthServer();
-    if (ok && win && !win.isDestroyed()) {
-        win.webContents.send('auth-success');
-    }
-});
-
-app.whenReady().then(async () => {
-    loadTokens();
+app.whenReady().then(() => {
     createOverlayWindow();
     createTrayMenu();
-
-    // if no token yet, trigger auth
-    if (!accessToken) {
-        setTimeout(() => {
-            if (win && !win.isDestroyed()) win.webContents.send('need-auth');
-        }, 1500);
-    }
-
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOverlayWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
@@ -501,10 +373,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onPlaylistsReply: (callback) => ipcRenderer.on('playlists-reply', (_event, value) => callback(value)),
     onTracksReply: (callback) => ipcRenderer.on('tracks-reply', (_event, value) => callback(value)),
     onSearchReply: (callback) => ipcRenderer.on('search-reply', (_event, value) => callback(value)),
-    onNeedAuth: (callback) => ipcRenderer.on('need-auth', () => callback()),
-    onAuthSuccess: (callback) => ipcRenderer.on('auth-success', () => callback()),
     sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
-    startAuth: () => ipcRenderer.send('start-auth'),
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
 PREEOF
@@ -559,7 +428,6 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .play-btn{-webkit-app-region:no-drag;color:rgb(30,215,96);font-size:14px;font-weight:bold;padding:4px 8px;cursor:pointer;border-radius:4px;flex-shrink:0}
 .play-btn:hover{background:rgba(30,215,96,.15)}
 .search-hint{color:rgba(255,255,255,.4);font-size:11px;text-align:center;padding:20px 10px}
-.auth-banner{background:rgba(30,215,96,.15);border:1px solid rgba(30,215,96,.4);border-radius:8px;padding:10px;margin-bottom:10px;text-align:center;color:#1DB954;font-size:12px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -587,7 +455,6 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
   </div>
 </div>
 <div class="drawer" id="extendedDrawer">
-  <div id="authBanner" class="auth-banner" style="display:none">Click here to connect your Spotify account</div>
   <input type="text" class="search-box" id="searchBox" placeholder="Search songs or artists..." />
   <div class="nav-tabs" id="drawerTabs">
     <div class="tab active" id="tabPlaylists">Playlists</div>
@@ -646,7 +513,7 @@ function updateWindowBounds(){
 function populateList(items){
     const container=document.getElementById("listContainer");
     container.innerHTML="";
-    if(!items||items.length===0){container.innerHTML=`<div class="search-hint">No items found</div>`;return}
+    if(!items||items.length===0){container.innerHTML=`<div class="search-hint">No public playlists found<br>Make sure the username is correct and playlists are public</div>`;return}
     items.forEach(item=>{
         const row=document.createElement("div");row.className="list-item";
         let visualMarkup=`<div class="list-thumb-ph">${item.isPlaylist?"📁":"🎵"}</div>`;
@@ -732,17 +599,6 @@ window.electronAPI.onSpotifyData(d=>{
     }
 });
 
-window.electronAPI.onNeedAuth(()=>{
-    document.getElementById('authBanner').style.display='block';
-});
-window.electronAPI.onAuthSuccess(()=>{
-    document.getElementById('authBanner').style.display='none';
-    window.electronAPI.sendControl('getRealPlaylists');
-});
-document.getElementById('authBanner').addEventListener('click',()=>{
-    window.electronAPI.startAuth();
-});
-
 setInterval(()=>{if(playing&&pos<total){pos=Math.min(total,pos+0.1);paint()}},100);
 const bars=document.querySelectorAll('.wave-bar');
 setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Math.random()*18)+4)+'px'}else{bar.style.height='5px'}bar.style.background=currentGradient})},140);
@@ -767,6 +623,6 @@ spinner_stop ok "kitty123 launched"
 echo ""
 printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
 echo ""
-log "A browser window will open so you can log in to Spotify."
-log "After you approve, your real playlists + search will work."
+log "Only public playlists will appear."
+log "Click the waves to open the drawer and see them."
 echo ""

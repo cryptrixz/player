@@ -9,17 +9,20 @@ echo "This installs a small floating window that always stays on top of"
 echo "everything else, including fullscreen apps like Roblox."
 echo ""
 
-# --- Check for Node.js, install via Homebrew if missing ---
 if ! command -v node &> /dev/null; then
-    echo "Node.js not found."
-    if ! command -v brew &> /dev/null; then
-        echo "Homebrew not found either. Installing Homebrew first (this will"
-        echo "ask for your password)..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+    echo "Node.js not found. Downloading the official installer..."
+    ARCH=$(uname -m)
+    if [ "$ARCH" == "arm64" ]; then
+        NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0.pkg"
+    else
+        NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0-x64.pkg"
     fi
-    echo "Installing Node.js via Homebrew..."
-    brew install node
+    curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
+    echo "Installing Node.js (this will ask for your password — normal macOS"
+    echo "installer prompt, not Xcode)..."
+    sudo installer -pkg /tmp/node-installer.pkg -target /
+    rm /tmp/node-installer.pkg
+    export PATH="/usr/local/bin:$PATH"
 fi
 
 echo "Node.js found: $(node --version)"
@@ -41,11 +44,9 @@ echo "======================================================"
 echo "Setup complete. Launching the overlay now..."
 echo "======================================================"
 
-# Kill any previous instance first
 pkill -f "electron $INSTALL_DIR" 2>/dev/null || true
 sleep 1
 
-# Launch in the background so this terminal window doesn't need to stay open
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
 

@@ -81,12 +81,6 @@ trap cleanup EXIT INT TERM
 
 banner
 
-echo ""
-read -r -p "Enter your Spotify username: " SPOTIFY_USER
-if [[ -z "$SPOTIFY_USER" ]]; then
-    die "Username is required"
-fi
-
 spinner_start "preparing install..."
 sleep 0.5
 spinner_stop ok "ready"
@@ -98,9 +92,6 @@ rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 spinner_stop ok "cleaned"
-
-# Save the username the user just typed
-echo "$SPOTIFY_USER" > "$INSTALL_DIR/username.txt"
 
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
@@ -136,10 +127,15 @@ const USERNAME_PATH = path.join(__dirname, 'username.txt');
 
 function getUsername() {
     try {
-        return fs.readFileSync(USERNAME_PATH, 'utf8').trim();
-    } catch (e) {
-        return null;
-    }
+        if (fs.existsSync(USERNAME_PATH)) {
+            return fs.readFileSync(USERNAME_PATH, 'utf8').trim();
+        }
+    } catch (e) {}
+    return null;
+}
+
+function saveUsername(name) {
+    fs.writeFileSync(USERNAME_PATH, name.trim());
 }
 
 async function getToken() {
@@ -274,10 +270,16 @@ ipcMain.on('spotify-control', async (event, data) => {
         return;
     }
 
+    if (data.action === 'saveUsername') {
+        saveUsername(data.value);
+        win.webContents.send('username-saved');
+        return;
+    }
+
     if (data.action === 'getRealPlaylists') {
         const username = getUsername();
         if (!username) {
-            win.webContents.send('playlists-reply', []);
+            win.webContents.send('need-username');
             return;
         }
         try {
@@ -373,6 +375,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onPlaylistsReply: (callback) => ipcRenderer.on('playlists-reply', (_event, value) => callback(value)),
     onTracksReply: (callback) => ipcRenderer.on('tracks-reply', (_event, value) => callback(value)),
     onSearchReply: (callback) => ipcRenderer.on('search-reply', (_event, value) => callback(value)),
+    onNeedUsername: (callback) => ipcRenderer.on('need-username', () => callback()),
+    onUsernameSaved: (callback) => ipcRenderer.on('username-saved', () => callback()),
     sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
@@ -410,7 +414,7 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .island-waves{-webkit-app-region:no-drag;position:absolute;right:8px;top:6px;display:flex;align-items:flex-end;gap:3px;height:22px;width:48px;justify-content:flex-end;cursor:pointer;z-index:10}
 .wave-bar{width:3px;height:6px;border-radius:2px;transition:height 0.12s ease-in-out,background 0.3s ease;background:linear-gradient(180deg,#78b4ff,#4a90e2,#2a6fd6)}
 .drawer{-webkit-app-region:no-drag;width:450px;height:0px;border-radius:18px;background:rgba(16,16,19,.92);border:0px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column;overflow:hidden;transition:all 0.25s ease-in-out;opacity:0}
-.drawer.open{height:260px;border:1px solid rgba(255,255,255,.22);opacity:1;padding:12px}
+.drawer.open{height:280px;border:1px solid rgba(255,255,255,.22);opacity:1;padding:12px}
 .search-box{width:100%;padding:8px 12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;outline:none;font-size:12px;margin-bottom:12px}
 .search-box::placeholder{color:rgba(255,255,255,.4)}
 .nav-tabs{display:flex;gap:14px;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:6px;margin-bottom:10px}
@@ -428,6 +432,10 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .play-btn{-webkit-app-region:no-drag;color:rgb(30,215,96);font-size:14px;font-weight:bold;padding:4px 8px;cursor:pointer;border-radius:4px;flex-shrink:0}
 .play-btn:hover{background:rgba(30,215,96,.15)}
 .search-hint{color:rgba(255,255,255,.4);font-size:11px;text-align:center;padding:20px 10px}
+.username-box{display:flex;flex-direction:column;gap:8px;padding:10px 0}
+.username-box input{width:100%;padding:8px 12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;outline:none;font-size:12px}
+.username-box button{padding:8px;background:#1DB954;border:none;border-radius:8px;color:#fff;font-weight:600;font-size:12px;cursor:pointer}
+.username-box button:hover{background:#1ed760}
 </style>
 </head>
 <body>
@@ -504,11 +512,33 @@ function paint(){
     document.getElementById("tTot").textContent=fmt(total);
 }
 function updateWindowBounds(){
-    let targetW=Math.floor(480*baseScale),targetH=Math.floor((drawerOpen?380:110)*baseScale);
+    let targetW=Math.floor(480*baseScale),targetH=Math.floor((drawerOpen?400:110)*baseScale);
     document.getElementById("playerShell").style.width=`${Math.floor(450*baseScale)}px`;
     document.getElementById("playerShell").style.height=`${Math.floor(80*baseScale)}px`;
     document.getElementById("extendedDrawer").style.width=`${Math.floor(450*baseScale)}px`;
     window.electronAPI.resizeWindow({width:targetW,height:targetH});
+}
+function showUsernamePrompt(){
+    const container=document.getElementById("listContainer");
+    container.innerHTML=`
+        <div class="username-box">
+            <div style="color:#fff;font-size:12px;margin-bottom:4px">Enter your Spotify username</div>
+            <input type="text" id="usernameInput" placeholder="e.g. johndoe" />
+            <button id="saveUsernameBtn">Save & Load Playlists</button>
+        </div>
+    `;
+    document.getElementById('saveUsernameBtn').addEventListener('click',()=>{
+        const val=document.getElementById('usernameInput').value.trim();
+        if(val){
+            window.electronAPI.sendControl('saveUsername',val);
+        }
+    });
+    document.getElementById('usernameInput').addEventListener('keydown',e=>{
+        if(e.key==='Enter'){
+            const val=e.target.value.trim();
+            if(val) window.electronAPI.sendControl('saveUsername',val);
+        }
+    });
 }
 function populateList(items){
     const container=document.getElementById("listContainer");
@@ -563,6 +593,8 @@ window.electronAPI.onPlaylistsReply(playlists=>{
 });
 window.electronAPI.onTracksReply(tracks=>{if(viewingPlaylist)populateList(tracks)});
 window.electronAPI.onSearchReply(tracks=>{populateList(tracks)});
+window.electronAPI.onNeedUsername(()=>{showUsernamePrompt()});
+window.electronAPI.onUsernameSaved(()=>{window.electronAPI.sendControl('getRealPlaylists')});
 
 document.getElementById('searchBox').addEventListener('keydown',e=>{
     if(e.key==='Enter'&&e.target.value.trim()){
@@ -623,6 +655,6 @@ spinner_stop ok "kitty123 launched"
 echo ""
 printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
 echo ""
-log "Only public playlists will appear."
-log "Click the waves to open the drawer and see them."
+log "Open the drawer (click the waves) → Playlists tab"
+log "It will ask for your Spotify username the first time"
 echo ""

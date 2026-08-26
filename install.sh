@@ -3,8 +3,6 @@ set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 
-echo "Setting up Spotify overlay directory files..."
-
 pkill -f "electron" 2>/dev/null || true
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -61,8 +59,7 @@ function createOverlayWindow() {
 }
 
 function createTrayMenu() {
-    tray = new Tray(path.join(__dirname, 'icon.png')); 
-    tray.setTitle("🎵"); 
+    tray = new Tray(path.join(__dirname, 'icon.png'));
     
     const contextMenu = Menu.buildFromTemplate([
         { 
@@ -95,7 +92,7 @@ function startAutomationLoops() {
                 if (win.isVisible()) win.hide();
             }
         });
-    }, 500);
+    }, 250);
 
     setInterval(() => {
         if (!win || win.isDestroyed() || !win.isVisible()) return;
@@ -110,7 +107,8 @@ function startAutomationLoops() {
                         set totalDur to duration of cTrack
                         set playerPos to player position
                         set pState to player state as string
-                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState
+                        set artworkUrl to artwork url of cTrack
+                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState & "||" & artworkUrl
                     on error
                         return "No Track"
                     end try
@@ -121,29 +119,39 @@ function startAutomationLoops() {
 
         exec(`osascript -e '${appleScript}'`, (err, stdout) => {
             if (err || !stdout || stdout.trim() === "No Track") {
-                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused" });
+                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "" });
+                if (tray) tray.setTitle("");
                 return;
             }
 
             const parts = stdout.trim().split('||');
-            if (parts.length >= 5) {
+            if (parts.length >= 6) {
+                const trackTitle = parts[0];
+                const artistName = parts[1];
                 win.webContents.send('spotify-data', {
-                    track: parts[0],
-                    artist: parts[1],
+                    track: trackTitle,
+                    artist: artistName,
                     duration: Math.floor(Number(parts[2]) / 1000),
                     position: Math.floor(Number(parts[3])),
-                    status: parts[4].toLowerCase()
+                    status: parts[4].toLowerCase(),
+                    image: parts[5]
                 });
+                if (tray) {
+                    let displayStr = trackTitle + " - " + artistName;
+                    if (displayStr.length > 20) displayStr = displayStr.substring(0, 17) + "...";
+                    tray.setTitle(displayStr);
+                }
             }
         });
-    }, 1000);
+    }, 250);
 }
 
-ipcMain.on('spotify-control', (event, action) => {
+ipcMain.on('spotify-control', (event, data) => {
     let script = '';
-    if (action === 'playpause') script = 'tell application "Spotify" to playpause';
-    if (action === 'next') script = 'tell application "Spotify" to next track';
-    if (action === 'prev') script = 'tell application "Spotify" to previous track';
+    if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
+    if (data.action === 'next') script = 'tell application "Spotify" to next track';
+    if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
+    if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
 
     if (script) {
         exec(`osascript -e '${script}'`, (err) => { if (err) console.log(err); });
@@ -168,19 +176,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value)),
-    sendControl: (action) => ipcRenderer.send('spotify-control', action)
+    sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value })
 });
 PREEOF
 
-echo "iVBORw0KGgoAAAANSUhEUSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
+echo "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAWklEQVQ4y2P4//8/AyUYGegETGg0gGgD0M0gWh9WDRDVAHQzSDYAXQ0w1gB0M8g2AN0MMNYAdDPINgDdDLL1YdUAUQ0g2gB0M4jWh1UDRDWAaAPQzSBaH8wAALw9GBl7N9GNAAAAAElFTkSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
 
 #!/bin/bash
 set -e
 
 INSTALL_DIR="$HOME/spotify-overlay-app"
 cd "$INSTALL_DIR"
-
-echo "Building layout interfaces and environment configurations..."
 
 ARCH=$(uname -m)
 if ! command -v node &> /dev/null; then
@@ -209,6 +215,7 @@ body{display:flex;align-items:center;justify-content:center}
     -webkit-app-region: drag;
     width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden
 }
+.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
 .artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -219,8 +226,11 @@ body{display:flex;align-items:center;justify-content:center}
     display:flex;gap:12px;flex-shrink:0;color:#fff;font-size:14px;font-weight:700;cursor:pointer
 }
 .btns span:hover { color: rgb(30, 215, 96); }
-.progress-wrap{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
-.bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative}
+.progress-wrap{
+    -webkit-app-region: no-drag;
+    flex:1;display:flex;flex-direction:column;gap:2px;min-width:0
+}
+.bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff}
 .dot{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;margin-left:-6px;border-radius:50%;background:#fff;left:0%}
 .times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
@@ -228,6 +238,7 @@ body{display:flex;align-items:center;justify-content:center}
 </head>
 <body>
 <div class="shell">
+  <img class="art" id="art" alt="" style="display:none"/>
   <div class="artph" id="artPh">♪</div>
   <div class="meta">
     <div class="track" id="track">Connecting...</div>
@@ -239,20 +250,31 @@ body{display:flex;align-items:center;justify-content:center}
         <span id="btnNext">&gt;|</span>
       </div>
       <div class="progress-wrap">
-        <div class="bar-bg"><div class="bar-fill" id="fill"></div><div class="dot" id="dot"></div></div>
+        <div class="bar-bg" id="progressBg"><div class="bar-fill" id="fill"></div><div class="dot" id="dot"></div></div>
         <div class="times"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
       </div>
     </div>
   </div>
 </div>
 <script>
-let total=1,pos=0,playing=false;
+let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
 function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("dot").style.left=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
 
 document.getElementById('btnPrev').addEventListener('click', () => window.electronAPI.sendControl('prev'));
 document.getElementById('btnPP').addEventListener('click', () => window.electronAPI.sendControl('playpause'));
 document.getElementById('btnNext').addEventListener('click', () => window.electronAPI.sendControl('next'));
+
+document.getElementById('progressBg').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    const targetSeconds = Math.floor(percentage * total);
+    pos = targetSeconds;
+    paint();
+    window.electronAPI.sendControl('scrub', targetSeconds);
+});
 
 window.electronAPI.onSpotifyData((d) => {
     document.getElementById("track").textContent = d.track || "Spotify";
@@ -261,6 +283,7 @@ window.electronAPI.onSpotifyData((d) => {
     pos = Math.max(0, Number(d.position) || 0);
     playing = d.status === "playing" || d.status === "kpsp";
     document.getElementById("btnPP").textContent = playing ? "||" : "|>";
+    setArt(d.image || "");
     paint();
 });
 
@@ -283,6 +306,3 @@ codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electr
 sleep 1
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown
-
-sleep 2
-echo "Done. Application logic execution complete."

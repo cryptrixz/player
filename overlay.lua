@@ -1,5 +1,4 @@
--- Meow :3
-
+-- Meow :3333
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -110,7 +109,7 @@ progressBarBg.Name = "ProgressBarBg"
 progressBarBg.Size = UDim2.new(0, 210, 0, 4)
 progressBarBg.Position = UDim2.new(0, 168, 0, 58)
 progressBarBg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-progressBarBg.BackgroundTransparency = 0.8
+progressBarBg.BackgroundTransparency = 0.75
 progressBarBg.BorderSizePixel = 0
 progressBarBg.Parent = mainFrame
 local barCorner = Instance.new("UICorner")
@@ -120,6 +119,7 @@ local progressBarFill = Instance.new("Frame")
 progressBarFill.Name = "ProgressBarFill"
 progressBarFill.Size = UDim2.new(0, 0, 1, 0)
 progressBarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+progressBarFill.BackgroundTransparency = 0
 progressBarFill.BorderSizePixel = 0
 progressBarFill.Parent = progressBarBg
 local fillCorner = Instance.new("UICorner")
@@ -160,7 +160,8 @@ timeTotal.Parent = mainFrame
 local customRequest = customRequest or http_request or request or (syn and syn.request) or (http and http.request)
 local function formatTime(seconds)
 	if not seconds or seconds < 0 then return "0:00" end
-	return string.format("%d:%02d", math.floor(seconds / 60), math.floor(seconds % 60))
+	seconds = math.floor(seconds)
+	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 local TOTAL_SECONDS = 1
 local currentSeconds = 0
@@ -168,7 +169,7 @@ local targetSeconds = 0
 local isDragging = false
 local isPlaying = false
 local appOnline = true
-local LERP_SPEED = 25
+local LERP_SPEED = 18
 sliderCircle.MouseEnter:Connect(function()
 	if isPlaying and appOnline then
 		TweenService:Create(sliderCircle, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -230,39 +231,36 @@ backBtn.MouseButton1Click:Connect(function()
 	sendControl("previous")
 end)
 RunService.Heartbeat:Connect(function(deltaTime)
-	local systemActive = appOnline
-	progressBarBg.Visible = systemActive
-	timeCurrent.Visible = systemActive
-	timeTotal.Visible = systemActive
+	progressBarBg.Visible = appOnline
+	timeCurrent.Visible = appOnline
+	timeTotal.Visible = appOnline
 	playPauseBtn.Text = isPlaying and "||" or "|>"
-	if not isDragging and isPlaying and appOnline then
+	if not isDragging and isPlaying and appOnline and TOTAL_SECONDS > 1 then
 		if targetSeconds < TOTAL_SECONDS then
 			targetSeconds = targetSeconds + deltaTime
 		end
 	end
 	currentSeconds = currentSeconds + (targetSeconds - currentSeconds) * math.clamp(deltaTime * LERP_SPEED, 0, 1)
-	local ratio = math.clamp(currentSeconds / TOTAL_SECONDS, 0, 1)
+	local ratio = 0
+	if TOTAL_SECONDS > 0 then
+		ratio = math.clamp(currentSeconds / TOTAL_SECONDS, 0, 1)
+	end
 	local halfDotSize = sliderCircle.Size.X.Offset / 2
 	progressBarFill.Size = UDim2.new(ratio, 0, 1, 0)
 	sliderCircle.Position = UDim2.new(ratio, -halfDotSize, 0.5, -halfDotSize)
 	timeCurrent.Text = formatTime(currentSeconds)
+	timeTotal.Text = formatTime(TOTAL_SECONDS)
 end)
 local function splitTitleArtist(raw)
 	if not raw or raw == "" then
 		return "No Track Playing", ""
 	end
 	local track, artist = raw:match("^(.-)%s*[·•|]%s*(.+)$")
-	if track and artist then
-		return track, artist
-	end
+	if track and artist then return track, artist end
 	track, artist = raw:match("^(.-)%s+%-%s+(.+)$")
-	if track and artist then
-		return track, artist
-	end
+	if track and artist then return track, artist end
 	track, artist = raw:match("^(.-)%s+by%s+(.+)$")
-	if track and artist then
-		return track, artist
-	end
+	if track and artist then return track, artist end
 	return raw, ""
 end
 task.spawn(function()
@@ -282,7 +280,7 @@ task.spawn(function()
 				local rawTrack = result.track or ""
 				local rawArtist = result.artist or ""
 				local trackName, artistName
-				if rawArtist ~= "" and rawArtist ~= nil then
+				if rawArtist ~= "" then
 					trackName = rawTrack
 					artistName = rawArtist
 				else
@@ -290,15 +288,17 @@ task.spawn(function()
 				end
 				if trackName and trackName ~= "" and trackName ~= "No Track Playing" then
 					trackLabel.Text = trackName
-					artistLabel.Text = artistName ~= "" and artistName or "Unknown Artist"
-					local newDuration = tonumber(result.duration) or 180
+					artistLabel.Text = (artistName ~= "" and artistName) or "Unknown Artist"
+					local newDuration = tonumber(result.duration) or 1
 					local newPosition = tonumber(result.position) or 0
-					timeTotal.Text = formatTime(newDuration)
-					if newDuration ~= TOTAL_SECONDS or math.abs(newPosition - targetSeconds) > 3 then
+					if newDuration < 1 then newDuration = 1 end
+					if newPosition < 0 then newPosition = 0 end
+					if newPosition > newDuration then newPosition = newDuration end
+					if newDuration ~= TOTAL_SECONDS or math.abs(newPosition - targetSeconds) > 2.5 then
 						currentSeconds = newPosition
+						targetSeconds = newPosition
 					end
 					TOTAL_SECONDS = newDuration
-					targetSeconds = newPosition
 					isPlaying = string.lower(tostring(result.status or "")) == "playing"
 				else
 					trackLabel.Text = "Spotify"
@@ -322,6 +322,6 @@ task.spawn(function()
 			isPlaying = false
 			appOnline = false
 		end
-		task.wait(5)
+		task.wait(4)
 	end
 end)

@@ -60,32 +60,22 @@ function createOverlayWindow() {
 
 function createTrayMenu() {
     tray = new Tray(path.join(__dirname, 'icon.png'));
-    
     const contextMenu = Menu.buildFromTemplate([
-        { 
-            label: 'Open Overlay', 
-            click: () => { if (win && !win.isDestroyed()) win.showInactive(); } 
-        },
-        { 
-            label: 'Close Overlay', 
-            click: () => { if (win && !win.isDestroyed()) win.hide(); } 
-        },
+        { label: 'Open Overlay', click: () => { if (win && !win.isDestroyed()) win.showInactive(); } },
+        { label: 'Close Overlay', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
         { type: 'separator' },
         { label: 'Quit', click: () => app.quit() }
     ]);
-    
     tray.setContextMenu(contextMenu);
 }
 
 function startAutomationLoops() {
     setInterval(() => {
         if (!win || win.isDestroyed()) return;
-        
         exec('osascript -e "get name of first application process whose frontmost is true"', (err, stdout) => {
             if (err) return;
             const activeApp = stdout.trim();
             const isRobloxActive = activeApp.includes('Roblox') || activeApp.includes('RobloxPlayer');
-            
             if (isRobloxActive) {
                 if (!win.isVisible()) win.showInactive();
             } else {
@@ -120,7 +110,6 @@ function startAutomationLoops() {
         exec(`osascript -e '${appleScript}'`, (err, stdout) => {
             if (err || !stdout || stdout.trim() === "No Track") {
                 win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "" });
-                if (tray) tray.setTitle("");
                 return;
             }
 
@@ -130,7 +119,6 @@ function startAutomationLoops() {
                 const artistName = parts[1];
                 const rawDur = Number(parts[2]);
                 const rawPos = Number(parts[3]);
-                
                 const isAd = trackTitle.toLowerCase().includes("advertisement") || artistName.toLowerCase().includes("spotify") || rawDur === 0;
                 const calculatedDur = isAd ? 30 : Math.floor(rawDur / 1000);
                 const calculatedPos = isAd ? Math.floor(rawPos) : rawPos;
@@ -144,11 +132,6 @@ function startAutomationLoops() {
                     image: parts[5],
                     isAd: isAd
                 });
-                if (tray) {
-                    let displayStr = trackTitle + " - " + artistName;
-                    if (displayStr.length > 20) displayStr = displayStr.substring(0, 17) + "...";
-                    tray.setTitle(displayStr);
-                }
             }
         });
     }, 250);
@@ -161,17 +144,7 @@ ipcMain.on('spotify-control', (event, data) => {
     if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
     if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
     if (data.action === 'searchPlay') {
-        script = `
-            tell application "Spotify"
-                activate
-                set trackUrn to ""
-                try
-                    tell application "System Events" to tell process "Spotify"
-                        set value of text field 1 of row 1 of outline 1 of scroll area 1 of splitter group 1 of window 1 to "${data.value}"
-                    end tell
-                end try
-            end tell
-        `;
+        script = `tell application "Spotify" to play track "spotify:search:${encodeURIComponent(data.value)}"`;
     }
 
     if (script) {
@@ -264,14 +237,18 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
     height: 20px;
     width: 40px;
     justify-content: flex-end;
-    cursor: pointer
+    cursor: pointer;
+    background: linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff);
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 .wave-bar {
     width: 3px;
     height: 4px;
     background-color: #fff;
     border-radius: 1px;
-    transition: all 0.15s ease-in-out
+    transition: all 0.15s ease-in-out;
+    mix-blend-mode: darken;
 }
 .drawer{
     -webkit-app-region: no-drag;
@@ -290,13 +267,11 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .list-container{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
 .list-item{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px;cursor:pointer}
 .list-item:hover{background:rgba(255,255,255,.05)}
-.list-thumb{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+.list-thumb{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);object-fit:cover}
+.list-thumb-ph{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;flex-shrink:0}
 .list-info{display:flex;flex-direction:column;min-width:0}
 .list-title{color:#fff;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.list-sub{color:rgba(255,255,255,.5);font-size:10px}
-.resize-handle{
-    position:absolute;right:4px;bottom:4px;width:10px;height:10px;cursor:se-resize;-webkit-app-region:no-drag;z-index:99
-}
+.list-sub{color:rgba(255,255,255,.5);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
@@ -341,19 +316,13 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 
 <script>
 let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false;
+let recentTracksMemory = [];
 const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
 
 const mockupPlaylists = [
-    { title: "Liked Songs", sub: "342 tracks", icon: "♥" },
-    { title: "Chill Gaming Vibes", sub: "Curated Mix", icon: "🎮" },
-    { title: "Lo-Fi Beats", sub: "Instrumental Focus", icon: "☕" },
-    { title: "Top Hits 2026", sub: "Spotify Updated", icon: "🔥" }
-];
-
-const mockupRecents = [
-    { title: "Pinky Up", sub: "KATSEYE", icon: "🎵" },
-    { title: "Cruel Summer", sub: "Taylor Swift", icon: "🎵" },
-    { title: "Starboy", sub: "The Weeknd", icon: "🎵" }
+    { title: "Liked Songs", sub: "KATSEYE - Pinky Up", icon: "♥" },
+    { title: "Chill Gaming Vibes", sub: "Phonk Mix", icon: "🎮" },
+    { title: "Lo-Fi Beats", sub: "Focus Study", icon: "☕" }
 ];
 
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
@@ -370,8 +339,10 @@ function extractColorAndTint(imgEl) {
         }
         if (count > 0) {
             r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
-            const bars = document.querySelectorAll('.wave-bar');
-            bars.forEach(bar => bar.style.backgroundColor = `rgb(${r},${g},${b})`);
+            const container = document.getElementById('islandWaves');
+            container.style.background = `linear-gradient(90deg, rgb(${r},${g},${b}), rgb(${g},${b},${r}), #00f0ff)`;
+            container.style.webkitBackgroundClip = 'text';
+            container.style.backgroundClip = 'text';
         }
     } catch(e){}
 }
@@ -380,7 +351,10 @@ function setArt(url){
     const img=document.getElementById("art"),ph=document.getElementById("artPh");
     if(!url){
         img.style.display="none";ph.style.display="flex";lastImg="";
-        document.querySelectorAll('.wave-bar').forEach(b => b.style.backgroundColor = '#fff');
+        const container = document.getElementById('islandWaves');
+        container.style.background = 'linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff)';
+        container.style.webkitBackgroundClip = 'text';
+        container.style.backgroundClip = 'text';
         return;
     }
     if(url===lastImg)return;
@@ -392,7 +366,10 @@ function setArt(url){
     };
     img.onerror=()=>{
         img.style.display="none";ph.style.display="flex";lastImg="";
-        document.querySelectorAll('.wave-bar').forEach(b => b.style.backgroundColor = '#fff');
+        const container = document.getElementById('islandWaves');
+        container.style.background = 'linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff)';
+        container.style.webkitBackgroundClip = 'text';
+        container.style.backgroundClip = 'text';
     };
     img.src=url;
 }
@@ -407,11 +384,9 @@ function paint(){
 function updateWindowBounds() {
     let targetW = Math.floor(480 * baseScale);
     let targetH = Math.floor((drawerOpen ? 340 : 110) * baseScale);
-    
     document.getElementById("playerShell").style.width = `${Math.floor(450 * baseScale)}px`;
     document.getElementById("playerShell").style.height = `${Math.floor(80 * baseScale)}px`;
     document.getElementById("extendedDrawer").style.width = `${Math.floor(450 * baseScale)}px`;
-    
     window.electronAPI.resizeWindow({ width: targetW, height: targetH });
 }
 
@@ -421,15 +396,19 @@ function populateList(items) {
     items.forEach(item => {
         const row = document.createElement("div");
         row.className = "list-item";
+        let visualMarkup = `<div class="list-thumb-ph">🎵</div>`;
+        if (item.image) {
+            visualMarkup = `<img class="list-thumb" src="${item.image}" onerror="this.style.display='none'" />`;
+        }
         row.innerHTML = `
-            <div class="list-thumb">${item.icon}</div>
+            ${visualMarkup}
             <div class="list-info">
                 <div class="list-title">${item.title}</div>
                 <div class="list-sub">${item.sub}</div>
             </div>
         `;
         row.addEventListener('click', () => {
-            window.electronAPI.sendControl('searchPlay', item.title);
+            window.electronAPI.sendControl('searchPlay', item.title + " " + item.sub);
         });
         container.appendChild(row);
     });
@@ -440,6 +419,7 @@ document.getElementById('islandWaves').addEventListener('click', () => {
     const dr = document.getElementById("extendedDrawer");
     if (drawerOpen) {
         dr.classList.add("open");
+        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : recentTracksMemory);
     } else {
         dr.classList.remove("open");
     }
@@ -464,16 +444,16 @@ document.getElementById('tabPlaylists').addEventListener('click', (e) => {
 document.getElementById('tabRecents').addEventListener('click', (e) => {
     document.getElementById('tabPlaylists').classList.remove('active');
     e.target.classList.add('active');
-    populateList(mockupRecents);
+    populateList(recentTracksMemory);
 });
 
 document.getElementById('searchBox').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
     if(!q) {
-        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : mockupRecents);
+        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : recentTracksMemory);
         return;
     }
-    const filtered = [...mockupPlaylists, ...mockupRecents].filter(i => i.title.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q));
+    const filtered = [...mockupPlaylists, ...recentTracksMemory].filter(i => i.title.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q));
     populateList(filtered);
 });
 
@@ -501,16 +481,22 @@ window.electronAPI.onSpotifyData((d) => {
     document.getElementById("track").textContent = d.track || "Spotify";
     document.getElementById("artist").textContent = d.artist || "No track playing";
     total = Math.max(1, Number(d.duration) || 1);
-    
     const incomingPos = Math.max(0, Number(d.position) || 0);
     if (!playing || Math.abs(incomingPos - pos) > 2) {
         pos = incomingPos;
     }
-    
     playing = d.status === "playing" || d.status === "kpsp";
     document.getElementById("btnPP").textContent = playing ? "||" : "|>";
     setArt(d.image || "");
     paint();
+
+    if (d.track && d.track !== "Spotify" && !recentTracksMemory.some(t => t.title === d.track)) {
+        recentTracksMemory.unshift({ title: d.track, sub: d.artist, image: d.image });
+        if (recentTracksMemory.length > 20) recentTracksMemory.pop();
+        if (document.getElementById('tabRecents').classList.contains('active')) {
+            populateList(recentTracksMemory);
+        }
+    }
 });
 
 setInterval(() => {
@@ -539,10 +525,8 @@ populateList(mockupPlaylists);
 HTMLEOF
 
 npm install --silent
-
 xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
 codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
-
 sleep 1
 nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
 disown

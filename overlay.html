@@ -6,16 +6,16 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
-body{display:flex;align-items:flex-end;justify-content:center;padding-bottom:20px}
-.shell{width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
-.art{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
+body{display:flex;align-items:center;justify-content:center}
+.shell{-webkit-app-region:drag;cursor:move;width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden}
+.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
 .artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row{display:flex;align-items:center;gap:8px;margin-top:8px}
-.btns{display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700}
-.progress-wrap{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.btns{-webkit-app-region:no-drag;display:flex;gap:6px;flex-shrink:0;color:#fff;font-size:13px;font-weight:700;cursor:pointer}
+.progress-wrap{-webkit-app-region:no-drag;flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative}
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff}
 .dot{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;margin-left:-6px;border-radius:50%;background:#fff;left:0%}
@@ -39,10 +39,11 @@ body{display:flex;align-items:flex-end;justify-content:center;padding-bottom:20p
   </div>
 </div>
 <script>
-const API="https://player-production-7e33.up.railway.app/music";
+const HOST="https://player-production-7e33.up.railway.app";
+const API=HOST+"/music";
 let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
-function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
+function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}const targetUrl=url.includes("mzstatic.com")?HOST+"/art?url="+encodeURIComponent(url):url;if(targetUrl===lastImg)return;lastImg=targetUrl;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=targetUrl}
 function apply(d){const track=d.track||"";if(track&&track!=="No Track Playing"){document.getElementById("track").textContent=track;document.getElementById("artist").textContent=d.artist||"Unknown Artist";total=Math.max(1,Number(d.duration)||1);pos=Math.max(0,Number(d.position)||0);if(pos>total)pos=total;playing=String(d.status||"").toLowerCase()==="playing";setArt(d.image||"")}else{document.getElementById("track").textContent="Spotify";document.getElementById("artist").textContent="No track playing";total=1;pos=0;playing=false;setArt("")}document.getElementById("pp").textContent=playing?"||":"|>";paint()}
 function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("dot").style.left=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
 async function poll(){try{const res=await fetch(API+"?t="+Date.now(),{cache:"no-store"});if(res.ok)apply(await res.json())}catch(e){document.getElementById("track").textContent="Offline";document.getElementById("artist").textContent="Check connection"}}

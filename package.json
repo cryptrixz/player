@@ -4,12 +4,15 @@
   "description": "Tiny backend that stores current Spotify status for the Roblox overlay",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js & electron app.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
   }
 }

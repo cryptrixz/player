@@ -128,13 +128,21 @@ function startAutomationLoops() {
             if (parts.length >= 6) {
                 const trackTitle = parts[0];
                 const artistName = parts[1];
+                const rawDur = Number(parts[2]);
+                const rawPos = Number(parts[3]);
+                
+                const isAd = trackTitle.toLowerCase().includes("advertisement") || artistName.toLowerCase().includes("spotify") || rawDur === 0;
+                const calculatedDur = isAd ? 30 : Math.floor(rawDur / 1000);
+                const calculatedPos = isAd ? Math.floor(rawPos) : rawPos;
+
                 win.webContents.send('spotify-data', {
                     track: trackTitle,
                     artist: artistName,
-                    duration: Math.floor(Number(parts[2]) / 1000),
-                    position: Math.floor(Number(parts[3])),
+                    duration: calculatedDur,
+                    position: calculatedPos,
                     status: parts[4].toLowerCase(),
-                    image: parts[5]
+                    image: parts[5],
+                    isAd: isAd
                 });
                 if (tray) {
                     let displayStr = trackTitle + " - " + artistName;
@@ -217,9 +225,9 @@ body{display:flex;align-items:center;justify-content:center}
 }
 .art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
 .artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
-.meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px}
-.track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px;position:relative}
+.track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
 .row{display:flex;align-items:center;gap:8px;margin-top:8px}
 .btns{
     -webkit-app-region: no-drag;
@@ -231,9 +239,26 @@ body{display:flex;align-items:center;justify-content:center}
     flex:1;display:flex;flex-direction:column;gap:2px;min-width:0
 }
 .bar-bg{height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
-.bar-fill{height:100%;width:0%;border-radius:2px;background:#fff}
-.dot{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;margin-left:-6px;border-radius:50%;background:#fff;left:0%}
+.bar-fill{height:100%;width:0%;border-radius:2px;background:#fff;transition:width 0.1s linear}
 .times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
+.island-waves {
+    position: absolute;
+    right: 0;
+    top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 20px;
+    width: 40px;
+    justify-content: flex-end
+}
+.wave-bar {
+    width: 3px;
+    height: 4px;
+    background-color: #fff;
+    border-radius: 1px;
+    transition: height 0.15s ease-in-out
+}
 </style>
 </head>
 <body>
@@ -243,6 +268,13 @@ body{display:flex;align-items:center;justify-content:center}
   <div class="meta">
     <div class="track" id="track">Connecting...</div>
     <div class="artist" id="artist"></div>
+    <div class="island-waves" id="islandWaves">
+      <div class="wave-bar" style="animation-delay: 0.0s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+      <div class="wave-bar" style="animation-delay: 0.4s;"></div>
+    </div>
     <div class="row">
       <div class="btns">
         <span id="btnPrev">|&lt;</span>
@@ -250,7 +282,7 @@ body{display:flex;align-items:center;justify-content:center}
         <span id="btnNext">&gt;|</span>
       </div>
       <div class="progress-wrap">
-        <div class="bar-bg" id="progressBg"><div class="bar-fill" id="fill"></div><div class="dot" id="dot"></div></div>
+        <div class="bar-bg" id="progressBg"><div class="bar-fill" id="fill"></div></div>
         <div class="times"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
       </div>
     </div>
@@ -260,7 +292,7 @@ body{display:flex;align-items:center;justify-content:center}
 let total=1,pos=0,playing=false,lastImg="";
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
-function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("dot").style.left=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
+function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
 
 document.getElementById('btnPrev').addEventListener('click', () => window.electronAPI.sendControl('prev'));
 document.getElementById('btnPP').addEventListener('click', () => window.electronAPI.sendControl('playpause'));
@@ -280,7 +312,12 @@ window.electronAPI.onSpotifyData((d) => {
     document.getElementById("track").textContent = d.track || "Spotify";
     document.getElementById("artist").textContent = d.artist || "No track playing";
     total = Math.max(1, Number(d.duration) || 1);
-    pos = Math.max(0, Number(d.position) || 0);
+    
+    const incomingPos = Math.max(0, Number(d.position) || 0);
+    if (!playing || Math.abs(incomingPos - pos) > 2) {
+        pos = incomingPos;
+    }
+    
     playing = d.status === "playing" || d.status === "kpsp";
     document.getElementById("btnPP").textContent = playing ? "||" : "|>";
     setArt(d.image || "");
@@ -289,10 +326,23 @@ window.electronAPI.onSpotifyData((d) => {
 
 setInterval(() => {
     if (playing && pos < total) {
-        pos = Math.min(total, pos + 0.25);
+        pos = Math.min(total, pos + 0.1);
         paint();
     }
-}, 250);
+}, 100);
+
+const bars = document.querySelectorAll('.wave-bar');
+setInterval(() => {
+    bars.forEach((bar) => {
+        if (playing) {
+            const heights =;
+            const randomHeight = heights[Math.floor(Math.random() * heights.length)];
+            bar.style.height = randomHeight + 'px';
+        } else {
+            bar.style.height = '4px';
+        }
+    });
+}, 150);
 </script>
 </body>
 </html>

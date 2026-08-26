@@ -40,7 +40,7 @@ function createOverlayWindow() {
         frame: false,
         transparent: true,
         alwaysOnTop: true,
-        resizable: false,
+        resizable: true,
         hasShadow: false,
         skipTaskbar: true,
         webPreferences: {
@@ -160,10 +160,34 @@ ipcMain.on('spotify-control', (event, data) => {
     if (data.action === 'next') script = 'tell application "Spotify" to next track';
     if (data.action === 'prev') script = 'tell application "Spotify" to previous track';
     if (data.action === 'scrub') script = `tell application "Spotify" to set player position to ${data.value}`;
+    if (data.action === 'searchPlay') {
+        script = `
+            tell application "Spotify"
+                activate
+                set trackUrn to ""
+                try
+                    tell application "System Events" to tell process "Spotify"
+                        set value of text field 1 of row 1 of outline 1 of scroll area 1 of splitter group 1 of window 1 to "${data.value}"
+                    end tell
+                end try
+            end tell
+        `;
+    }
 
     if (script) {
         exec(`osascript -e '${script}'`, (err) => { if (err) console.log(err); });
     }
+});
+
+ipcMain.on('resize-window', (event, bounds) => {
+    if (!win || win.isDestroyed()) return;
+    const { width: scrW, height: scrH } = screen.getPrimaryDisplay().workAreaSize;
+    win.setBounds({
+        width: Math.floor(bounds.width),
+        height: Math.floor(bounds.height),
+        x: Math.floor((scrW - bounds.width) / 2),
+        y: scrH - Math.floor(bounds.height) - 20
+    }, true);
 });
 
 app.whenReady().then(() => {
@@ -184,7 +208,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value)),
-    sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value })
+    sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
+    resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
 PREEOF
 
@@ -196,19 +221,6 @@ set -e
 INSTALL_DIR="$HOME/spotify-overlay-app"
 cd "$INSTALL_DIR"
 
-ARCH=$(uname -m)
-if ! command -v node &> /dev/null; then
-    if [ "$ARCH" == "arm64" ]; then
-        NODE_URL="https://nodejs.org"
-    else
-        NODE_URL="https://nodejs.org"
-    fi
-    curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
-    sudo installer -pkg /tmp/node-installer.pkg -target /
-    rm /tmp/node-installer.pkg
-    export PATH="/usr/local/bin:$PATH"
-fi
-
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -218,13 +230,13 @@ cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;background-color:rgba(0,0,0,0) !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
-body{display:flex;align-items:center;justify-content:center}
+body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px}
 .shell{
     -webkit-app-region: drag;
-    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden
+    width:450px;height:80px;border-radius:18px;background:rgba(16,16,19,.88);border:1px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;padding:0 12px;gap:12px;position:relative;overflow:hidden;transition:all 0.25s ease-in-out
 }
-.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0}
-.artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0}
+.art{-webkit-app-region:no-drag;width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);object-fit:cover;flex-shrink:0;cursor:pointer}
+.artph{width:56px;height:56px;border-radius:12px;background:rgba(45,45,50,.8);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:20px;flex-shrink:0;cursor:pointer;-webkit-app-region:no-drag}
 .meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;height:64px;position:relative}
 .track{color:#fff;font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
 .artist{color:rgb(170,170,178);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
@@ -242,6 +254,7 @@ body{display:flex;align-items:center;justify-content:center}
 .bar-fill{height:100%;width:0%;border-radius:2px;background:#fff;transition:width 0.1s linear}
 .times{display:flex;justify-content:space-between;color:rgb(170,170,178);font-size:10px;font-variant-numeric:tabular-nums}
 .island-waves {
+    -webkit-app-region: no-drag;
     position: absolute;
     right: 0;
     top: 4px;
@@ -250,30 +263,56 @@ body{display:flex;align-items:center;justify-content:center}
     gap: 2px;
     height: 20px;
     width: 40px;
-    justify-content: flex-end
+    justify-content: flex-end;
+    cursor: pointer
 }
 .wave-bar {
     width: 3px;
     height: 4px;
     background-color: #fff;
     border-radius: 1px;
-    transition: height 0.15s ease-in-out
+    transition: all 0.15s ease-in-out
+}
+.drawer{
+    -webkit-app-region: no-drag;
+    width:450px;height:0px;border-radius:18px;background:rgba(16,16,19,.92);border:0px solid rgba(255,255,255,.22);box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column;overflow:hidden;transition:all 0.25s ease-in-out;opacity:0
+}
+.drawer.open{
+    height:220px;border:1px solid rgba(255,255,255,.22);opacity:1;padding:12px
+}
+.search-box{
+    width:100%;padding:8px 12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;outline:none;font-size:12px;margin-bottom:12px
+}
+.search-box::placeholder{color:rgba(255,255,255,.4)}
+.nav-tabs{display:flex;gap:12px;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:6px;margin-bottom:10px}
+.tab{color:rgba(255,255,255,.5);font-size:12px;font-weight:600;cursor:pointer}
+.tab.active{color:#fff;border-bottom:2px solid #fff;padding-bottom:4px}
+.list-container{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.list-item{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px;cursor:pointer}
+.list-item:hover{background:rgba(255,255,255,.05)}
+.list-thumb{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+.list-info{display:flex;flex-direction:column;min-width:0}
+.list-title{color:#fff;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list-sub{color:rgba(255,255,255,.5);font-size:10px}
+.resize-handle{
+    position:absolute;right:4px;bottom:4px;width:10px;height:10px;cursor:se-resize;-webkit-app-region:no-drag;z-index:99
 }
 </style>
 </head>
 <body>
-<div class="shell">
+
+<div class="shell" id="playerShell">
   <img class="art" id="art" alt="" style="display:none"/>
   <div class="artph" id="artPh">♪</div>
   <div class="meta">
     <div class="track" id="track">Connecting...</div>
     <div class="artist" id="artist"></div>
-    <div class="island-waves" id="islandWaves">
-      <div class="wave-bar" style="animation-delay: 0.0s;"></div>
-      <div class="wave-bar" style="animation-delay: 0.1s;"></div>
-      <div class="wave-bar" style="animation-delay: 0.2s;"></div>
-      <div class="wave-bar" style="animation-delay: 0.3s;"></div>
-      <div class="wave-bar" style="animation-delay: 0.4s;"></div>
+    <div class="island-waves" id="islandWaves" title="Click to expand browser">
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
     </div>
     <div class="row">
       <div class="btns">
@@ -288,11 +327,161 @@ body{display:flex;align-items:center;justify-content:center}
     </div>
   </div>
 </div>
+
+<div class="drawer" id="extendedDrawer">
+  <input type="text" class="search-box" id="searchBox" placeholder="Search songs or artists..." />
+  <div class="nav-tabs">
+    <div class="tab active" id="tabPlaylists">Playlists</div>
+    <div class="tab" id="tabRecents">Recents</div>
+  </div>
+  <div class="list-container" id="listContainer"></div>
+</div>
+
+<canvas id="colorCanvas" style="display:none;" width="10" height="10"></canvas>
+
 <script>
-let total=1,pos=0,playing=false,lastImg="";
+let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false;
+const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
+
+const mockupPlaylists = [
+    { title: "Liked Songs", sub: "342 tracks", icon: "♥" },
+    { title: "Chill Gaming Vibes", sub: "Curated Mix", icon: "🎮" },
+    { title: "Lo-Fi Beats", sub: "Instrumental Focus", icon: "☕" },
+    { title: "Top Hits 2026", sub: "Spotify Updated", icon: "🔥" }
+];
+
+const mockupRecents = [
+    { title: "Pinky Up", sub: "KATSEYE", icon: "🎵" },
+    { title: "Cruel Summer", sub: "Taylor Swift", icon: "🎵" },
+    { title: "Starboy", sub: "The Weeknd", icon: "🎵" }
+];
+
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
-function setArt(url){const img=document.getElementById("art"),ph=document.getElementById("artPh");if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}if(url===lastImg)return;lastImg=url;img.onload=()=>{img.style.display="block";ph.style.display="none"};img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};img.src=url}
-function paint(){const r=total>0?Math.min(1,pos/total):0;document.getElementById("fill").style.width=(r*100)+"%";document.getElementById("tCur").textContent=fmt(pos);document.getElementById("tTot").textContent=fmt(total)}
+
+function extractColorAndTint(imgEl) {
+    try {
+        ctx.drawImage(imgEl, 0, 0, 10, 10);
+        const data = ctx.getImageData(0, 0, 10, 10).data;
+        let r=0, g=0, b=0, count=0;
+        for (let i=0; i<data.length; i+=4) {
+            if (data[i]+data[i+1]+data[i+2] > 60 && data[i]+data[i+1]+data[i+2] < 680) {
+                r += data[i]; g += data[i+1]; b += data[i+2]; count++;
+            }
+        }
+        if (count > 0) {
+            r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
+            const bars = document.querySelectorAll('.wave-bar');
+            bars.forEach(bar => bar.style.backgroundColor = `rgb(${r},${g},${b})`);
+        }
+    } catch(e){}
+}
+
+function setArt(url){
+    const img=document.getElementById("art"),ph=document.getElementById("artPh");
+    if(!url){
+        img.style.display="none";ph.style.display="flex";lastImg="";
+        document.querySelectorAll('.wave-bar').forEach(b => b.style.backgroundColor = '#fff');
+        return;
+    }
+    if(url===lastImg)return;
+    lastImg=url;
+    img.crossOrigin = "Anonymous";
+    img.onload=()=>{
+        img.style.display="block";ph.style.display="none";
+        extractColorAndTint(img);
+    };
+    img.onerror=()=>{
+        img.style.display="none";ph.style.display="flex";lastImg="";
+        document.querySelectorAll('.wave-bar').forEach(b => b.style.backgroundColor = '#fff');
+    };
+    img.src=url;
+}
+
+function paint(){
+    const r=total>0?Math.min(1,pos/total):0;
+    document.getElementById("fill").style.width=(r*100)+"%";
+    document.getElementById("tCur").textContent=fmt(pos);
+    document.getElementById("tTot").textContent=fmt(total);
+}
+
+function updateWindowBounds() {
+    let targetW = Math.floor(480 * baseScale);
+    let targetH = Math.floor((drawerOpen ? 340 : 110) * baseScale);
+    
+    document.getElementById("playerShell").style.width = `${Math.floor(450 * baseScale)}px`;
+    document.getElementById("playerShell").style.height = `${Math.floor(80 * baseScale)}px`;
+    document.getElementById("extendedDrawer").style.width = `${Math.floor(450 * baseScale)}px`;
+    
+    window.electronAPI.resizeWindow({ width: targetW, height: targetH });
+}
+
+function populateList(items) {
+    const container = document.getElementById("listContainer");
+    container.innerHTML = "";
+    items.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "list-item";
+        row.innerHTML = `
+            <div class="list-thumb">${item.icon}</div>
+            <div class="list-info">
+                <div class="list-title">${item.title}</div>
+                <div class="list-sub">${item.sub}</div>
+            </div>
+        `;
+        row.addEventListener('click', () => {
+            window.electronAPI.sendControl('searchPlay', item.title);
+        });
+        container.appendChild(row);
+    });
+}
+
+document.getElementById('islandWaves').addEventListener('click', () => {
+    drawerOpen = !drawerOpen;
+    const dr = document.getElementById("extendedDrawer");
+    if (drawerOpen) {
+        dr.classList.add("open");
+    } else {
+        dr.classList.remove("open");
+    }
+    updateWindowBounds();
+});
+
+document.getElementById('art').addEventListener('click', () => {
+    baseScale = baseScale === 1.0 ? 1.25 : (baseScale === 1.25 ? 0.85 : 1.0);
+    updateWindowBounds();
+});
+document.getElementById('artPh').addEventListener('click', () => {
+    baseScale = baseScale === 1.0 ? 1.25 : (baseScale === 1.25 ? 0.85 : 1.0);
+    updateWindowBounds();
+});
+
+document.getElementById('tabPlaylists').addEventListener('click', (e) => {
+    document.getElementById('tabRecents').classList.remove('active');
+    e.target.classList.add('active');
+    populateList(mockupPlaylists);
+});
+
+document.getElementById('tabRecents').addEventListener('click', (e) => {
+    document.getElementById('tabPlaylists').classList.remove('active');
+    e.target.classList.add('active');
+    populateList(mockupRecents);
+});
+
+document.getElementById('searchBox').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    if(!q) {
+        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : mockupRecents);
+        return;
+    }
+    const filtered = [...mockupPlaylists, ...mockupRecents].filter(i => i.title.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q));
+    populateList(filtered);
+});
+
+document.getElementById('searchBox').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.value.trim()) {
+        window.electronAPI.sendControl('searchPlay', e.target.value);
+    }
+});
 
 document.getElementById('btnPrev').addEventListener('click', () => window.electronAPI.sendControl('prev'));
 document.getElementById('btnPP').addEventListener('click', () => window.electronAPI.sendControl('playpause'));
@@ -342,6 +531,8 @@ setInterval(() => {
         }
     });
 }, 150);
+
+populateList(mockupPlaylists);
 </script>
 </body>
 </html>

@@ -1,16 +1,27 @@
 #!/bin/bash
 set -e
 
+# === Colors ===
+BLUE='\033[38;5;33m'      # bright blue
+DARKBLUE='\033[38;5;24m'  # darker blue
+BOLD='\033[1m'
+RESET='\033[0m'
+
 INSTALL_DIR="$HOME/spotify-overlay-app"
 REPO_RAW="https://raw.githubusercontent.com/cryptrixz/player/refs/heads/main"
 
-echo "== Spotify Desktop Overlay Setup =="
+echo -e "${DARKBLUE}┌─────────────────────────────────────┐${RESET}"
+echo -e "${DARKBLUE}│${RESET}  ${BOLD}${BLUE}kitty123 Installer${RESET}                  ${DARKBLUE}│${RESET}"
+echo -e "${DARKBLUE}└─────────────────────────────────────┘${RESET}"
+echo ""
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] Setting up Spotify overlay..."
+echo ""
 echo "This installs a small floating window that always stays on top of"
 echo "everything else, including fullscreen apps like Roblox."
 echo ""
 
 if ! command -v node &> /dev/null; then
-    echo "Node.js not found. Downloading the official installer..."
+    echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] Node.js not found, downloading installer..."
     ARCH=$(uname -m)
     if [ "$ARCH" == "arm64" ]; then
         NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0.pkg"
@@ -18,31 +29,29 @@ if ! command -v node &> /dev/null; then
         NODE_URL="https://nodejs.org/dist/v20.17.0/node-v20.17.0-x64.pkg"
     fi
     curl -fsSL "$NODE_URL" -o /tmp/node-installer.pkg
-    echo "Installing Node.js (this will ask for your password — normal macOS"
-    echo "installer prompt, not Xcode)..."
+    echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] admin access required — enter your mac password if asked"
     sudo installer -pkg /tmp/node-installer.pkg -target /
     rm /tmp/node-installer.pkg
     export PATH="/usr/local/bin:$PATH"
 fi
 
-echo "Node.js found: $(node --version)"
-echo ""
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] node.js ready: $(node --version)"
 
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-echo "Downloading app files..."
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] downloading app files..."
 curl -fsSL "$REPO_RAW/desktop-overlay/app.js" -o app.js
 curl -fsSL "$REPO_RAW/desktop-overlay/overlay.html" -o overlay.html
 curl -fsSL "$REPO_RAW/desktop-overlay/package.json" -o package.json
 
-echo "Installing dependencies (this may take a minute)..."
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] installing dependencies..."
 npm install --silent
 
 echo ""
-echo "======================================================"
-echo "Setup complete. Launching the overlay now..."
-echo "======================================================"
+echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] setup complete, launching overlay..."
+echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"
 
 pkill -f "electron $INSTALL_DIR" 2>/dev/null || true
 sleep 1
@@ -52,9 +61,9 @@ disown
 
 sleep 2
 echo ""
-echo "Done! The overlay should now be visible near the bottom of your screen,"
-echo "and will stay on top even when Roblox is fullscreen."
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] done! overlay is running near the bottom of your screen"
+echo -e "${BLUE}kitty123${RESET}::[$(date +%H:%M:%S)] stays on top even when Roblox is fullscreen"
 echo ""
-echo "To stop it:    pkill -f electron"
-echo "To run again:  cd $INSTALL_DIR && npm start"
-echo "======================================================"
+echo -e "  ${DARKBLUE}stop:${RESET}    pkill -f electron"
+echo -e "  ${DARKBLUE}restart:${RESET} cd $INSTALL_DIR && npm start"
+echo -e "${DARKBLUE}────────────────────────────────────────${RESET}"

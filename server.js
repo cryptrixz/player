@@ -10,45 +10,49 @@ app.use((req, res, next) => {
   next();
 });
 
-function emptyTrack() {
-  return {
-    status: "paused",
-    track: "No Track Playing",
-    artist: "",
-    position: 0,
-    duration: 1,
-    image: "",
-  };
-}
+let currentTrack = {
+  status: "paused",
+  track: "No Track Playing",
+  artist: "",
+  position: 0,
+  duration: 1,
+  image: "",
+};
 
-let currentTrack = emptyTrack();
+app.get("/", (_req, res) => res.send("ok"));
 
-app.get("/", (_req, res) => {
-  res.send("Spotify overlay backend (passthrough).");
-});
-
-app.get("/music", (_req, res) => {
-  res.json(currentTrack);
-});
+app.get("/music", (_req, res) => res.json(currentTrack));
 
 app.post("/music", (req, res) => {
-  const body = req.body || {};
+  const b = req.body || {};
   currentTrack = {
-    status: body.status || "paused",
-    track: body.track || "No Track Playing",
-    artist: body.artist || "",
-    position: Number(body.position) || 0,
-    duration: Math.max(1, Number(body.duration) || 1),
-    image: body.image || "",
+    status: b.status || "paused",
+    track: b.track || "No Track Playing",
+    artist: b.artist || "",
+    position: Math.max(0, Number(b.position) || 0),
+    duration: Math.max(1, Number(b.duration) || 1),
+    image: b.image || "",
   };
   res.json({ ok: true });
 });
 
-app.post("/control/:action", (_req, res) => {
-  res.json({ ok: true });
+app.get("/art", async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url || typeof url !== "string") return res.status(400).end();
+    if (!/mzstatic\.com/i.test(url)) return res.status(400).end();
+    const r = await fetch(url);
+    if (!r.ok) return res.status(502).end();
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(buf);
+  } catch {
+    res.status(502).end();
+  }
 });
 
+app.post("/control/:action", (_req, res) => res.json({ ok: true }));
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Passthrough backend listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("listening", PORT));

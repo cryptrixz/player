@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Spotify Callback</title>
+</head>
+<body>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (code) {
+    document.body.innerHTML = `
+      <h1>Authorization Code</h1>
+      <p>Your code: <strong>${code}</strong></p>
+      <p>Copy this code and run the curl command in your terminal.</p>
+    `;
+  } else {
+    document.body.innerHTML = '<p>No code found in URL.</p>';
+  }
+</script>
+</body>
+</html>

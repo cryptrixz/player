@@ -108,8 +108,7 @@ function startAutomationLoops() {
                         set totalDur to duration of cTrack
                         set playerPos to player position
                         set pState to player state as string
-                        set artworkUrl to artwork url of cTrack
-                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState & "||" & artworkUrl
+                        return trackName & "||" & artistName & "||" & totalDur & "||" & playerPos & "||" & pState
                     on error
                         return "No Track"
                     end try
@@ -120,13 +119,13 @@ function startAutomationLoops() {
 
         exec(`osascript -e '${appleScript}'`, (err, stdout) => {
             if (err || !stdout || stdout.trim() === "No Track") {
-                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "" });
+                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused" });
                 if (tray) tray.setTitle("");
                 return;
             }
 
             const parts = stdout.trim().split('||');
-            if (parts.length >= 6) {
+            if (parts.length >= 5) {
                 const trackTitle = parts[0];
                 const artistName = parts[1];
                 const rawDur = Number(parts[2]);
@@ -141,9 +140,7 @@ function startAutomationLoops() {
                     artist: artistName,
                     duration: calculatedDur,
                     position: calculatedPos,
-                    status: parts[4].toLowerCase(),
-                    image: parts[5],
-                    isAd: isAd
+                    status: parts[4].toLowerCase()
                 });
                 if (tray) {
                     let displayStr = trackTitle + " - " + artistName;
@@ -372,8 +369,19 @@ npm install --silent
 xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
 codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
 
-# Turn the AppleScript execution structure into kitty123.app bundle format without compiler tools
-osacompile -e "do shell script \"cd $INSTALL_DIR && nohup ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . > /dev/null 2>&1 &\"" -o kitty123.app
+rm -rf kitty123.app
+mkdir -p kitty123.app/Contents/MacOS
+mkdir -p kitty123.app/Contents/Resources
+mkdir -p kitty123.app/Contents/images
+
+cat > kitty123.app/Contents/MacOS/applet << 'APPLETEOF'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$HOME/spotify-overlay-app"
+cd "$BASE_DIR"
+nohup ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . > /dev/null 2>&1 &
+APPLETEOF
+chmod +x kitty123.app/Contents/MacOS/applet
 
 cat > kitty123.app/Contents/Info.plist << 'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -403,24 +411,23 @@ import subprocess
 
 try:
     img_url = "https://githubusercontent.com"
-    urllib.request.urlretrieve(img_url, "source.png")
+    urllib.request.urlretrieve(img_url, "kitty123.app/Contents/images/source.png")
     
     os.makedirs("AppIcon.iconset", exist_ok=True)
     sizes = [16, 32, 64, 128, 256, 512]
     
     for s in sizes:
-        subprocess.run(["sips", "-z", str(s), str(s), "source.png", "--out", f"AppIcon.iconset/icon_{s}x{s}.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["sips", "-z", str(s), str(s), "kitty123.app/Contents/images/source.png", "--out", f"AppIcon.iconset/icon_{s}x{s}.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if s * 2 <= 1024:
-            subprocess.run(["sips", "-z", str(s*2), str(s*2), "source.png", "--out", f"AppIcon.iconset/icon_{s}x{s}@2x.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sips", "-z", str(s*2), str(s*2), "kitty123.app/Contents/images/source.png", "--out", f"AppIcon.iconset/icon_{s}x{s}@2x.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
-    subprocess.run(["iconutil", "-c", "icns", "AppIcon.iconset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if os.path.exists("AppIcon.icns"):
-        os.rename("AppIcon.icns", "kitty123.app/Contents/Resources/AppIcon.icns")
+    if os.path.exists("AppIcon.iconset/icon_512x512.png"):
+        os.rename("AppIcon.iconset/icon_512x512.png", "kitty123.app/Contents/Resources/AppIcon.icns")
 except:
     pass
 PYEOF
 
 python3 make_icon.py 2>/dev/null || true
-rm -rf AppIcon.iconset source.png make_icon.py
+rm -rf AppIcon.iconset make_icon.py
 
 open kitty123.app

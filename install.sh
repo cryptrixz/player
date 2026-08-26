@@ -146,6 +146,69 @@ ipcMain.on('spotify-control', (event, data) => {
     if (data.action === 'searchPlay') {
         script = `tell application "Spotify" to play track "spotify:search:${encodeURIComponent(data.value)}"`;
     }
+    if (data.action === 'playUri') {
+        script = `tell application "Spotify" to play track "${data.value}"`;
+    }
+    if (data.action === 'getRealPlaylists') {
+        const fetchScript = `
+            if application "Spotify" is running then
+                tell application "Spotify"
+                    set out to ""
+                    try
+                        set allPlaylists to bookmarks of folder "Playlists" of library
+                    on error
+                        try
+                            set allPlaylists to playlists
+                        on error
+                            return "[]"
+                        end try
+                    end try
+                    
+                    repeat with pl in allPlaylists
+                        try
+                            set plName to name of pl
+                            set plId to id of pl
+                            set out to out & plName & "::" & plId & "||"
+                        end try
+                    end repeat
+                    return out
+                end tell
+            end if
+            return ""
+        `;
+        exec(`osascript -e '${fetchScript}'`, (err, stdout) => {
+            if (err || !stdout) return;
+            const list = stdout.trim().split('||').filter(Boolean).map(p => {
+                const parts = p.split('::');
+                return { title: parts[0], id: parts[1], isPlaylist: true };
+            });
+            win.webContents.send('playlists-reply', list);
+        });
+        return;
+    }
+    if (data.action === 'getPlaylistTracks') {
+        const fetchTracks = `
+            tell application "Spotify"
+                set out to ""
+                try
+                    set trackList to tracks of playlist id "${data.value}"
+                    repeat with t in trackList
+                        set out to out & name of t & "::" & artist of t & "::" & id of t & "||"
+                    </repeat>
+                end try
+                return out
+            end tell
+        `;
+        exec(`osascript -e '${fetchTracks}'`, (err, stdout) => {
+            if (err || !stdout) return;
+            const tracks = stdout.trim().split('||').filter(Boolean).map(t => {
+                const parts = t.split('::');
+                return { title: parts[0], artist: parts[1], id: parts[2] };
+            });
+            win.webContents.send('tracks-reply', tracks);
+        });
+        return;
+    }
 
     if (script) {
         exec(`osascript -e '${script}'`, (err) => { if (err) console.log(err); });
@@ -181,6 +244,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     onSpotifyData: (callback) => ipcRenderer.on('spotify-data', (_event, value) => callback(value)),
+    onPlaylistsReply: (callback) => ipcRenderer.on('playlists-reply', (_event, value) => callback(value)),
+    onTracksReply: (callback) => ipcRenderer.on('tracks-reply', (_event, value) => callback(value)),
     sendControl: (action, value = null) => ipcRenderer.send('spotify-control', { action, value }),
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
@@ -235,20 +300,17 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
     align-items: center;
     gap: 2px;
     height: 20px;
-    width: 40px;
+    width: 45px;
     justify-content: flex-end;
     cursor: pointer;
     background: linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff);
-    -webkit-background-clip: text;
-    background-clip: text;
 }
 .wave-bar {
     width: 3px;
-    height: 4px;
-    background-color: #fff;
+    height: 16px;
+    background-color: rgba(16,16,19,.88);
     border-radius: 1px;
-    transition: all 0.15s ease-in-out;
-    mix-blend-mode: darken;
+    transition: height 0.1s ease-in-out;
 }
 .drawer{
     -webkit-app-region: no-drag;
@@ -264,10 +326,11 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 .nav-tabs{display:flex;gap:12px;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:6px;margin-bottom:10px}
 .tab{color:rgba(255,255,255,.5);font-size:12px;font-weight:600;cursor:pointer}
 .tab.active{color:#fff;border-bottom:2px solid #fff;padding-bottom:4px}
+.back-btn{color:rgb(30, 215, 96);font-size:11px;cursor:pointer;margin-bottom:6px;display:none;font-weight:bold}
 .list-container{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
 .list-item{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px;cursor:pointer}
 .list-item:hover{background:rgba(255,255,255,.05)}
-.list-thumb{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);object-fit:cover}
+.list-thumb{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);object-fit:cover;flex-shrink:0}
 .list-thumb-ph{width:32px;height:32px;border-radius:4px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;flex-shrink:0}
 .list-info{display:flex;flex-direction:column;min-width:0}
 .list-title{color:#fff;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -305,27 +368,42 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 
 <div class="drawer" id="extendedDrawer">
   <input type="text" class="search-box" id="searchBox" placeholder="Search songs or artists..." />
-  <div class="nav-tabs">
+  <div class="nav-tabs" id="drawerTabs">
     <div class="tab active" id="tabPlaylists">Playlists</div>
     <div class="tab" id="tabRecents">Recents</div>
   </div>
+  <div class="back-btn" id="backBtn">&lt; Back to Playlists</div>
   <div class="list-container" id="listContainer"></div>
 </div>
 
 <canvas id="colorCanvas" style="display:none;" width="10" height="10"></canvas>
 
 <script>
-let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false;
+let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false,viewingPlaylist=false;
 let recentTracksMemory = [];
+let loadedPlaylistsMemory = [];
 const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
 
-const mockupPlaylists = [
-    { title: "Liked Songs", sub: "KATSEYE - Pinky Up", icon: "♥" },
-    { title: "Chill Gaming Vibes", sub: "Phonk Mix", icon: "🎮" },
-    { title: "Lo-Fi Beats", sub: "Focus Study", icon: "☕" }
-];
-
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+
+function updateGradientBars(r, g, b) {
+    const container = document.getElementById('islandWaves');
+    container.style.background = `linear-gradient(90deg, rgb(${r},${g},${b}), rgb(${g},${b},${r}), #00f0ff)`;
+    container.style.webkitBackgroundClip = 'text';
+    container.style.backgroundClip = 'text';
+    
+    let maskPattern = 'transparent 0%, ';
+    const bars = document.querySelectorAll('.wave-bar');
+    let currentPercent = 0;
+    
+    bars.forEach((bar, index) => {
+        let heightPx = parseInt(bar.style.height) || 4;
+        let gapTop = 20 - heightPx;
+        maskPattern += `black ${currentPercent}%, black ${currentPercent + 6}%, transparent ${currentPercent + 6}%`;
+        if(index < bars.length - 1) maskPattern += ', ';
+        currentPercent += 20;
+    });
+}
 
 function extractColorAndTint(imgEl) {
     try {
@@ -339,10 +417,7 @@ function extractColorAndTint(imgEl) {
         }
         if (count > 0) {
             r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
-            const container = document.getElementById('islandWaves');
-            container.style.background = `linear-gradient(90deg, rgb(${r},${g},${b}), rgb(${g},${b},${r}), #00f0ff)`;
-            container.style.webkitBackgroundClip = 'text';
-            container.style.backgroundClip = 'text';
+            updateGradientBars(r, g, b);
         }
     } catch(e){}
 }
@@ -351,10 +426,6 @@ function setArt(url){
     const img=document.getElementById("art"),ph=document.getElementById("artPh");
     if(!url){
         img.style.display="none";ph.style.display="flex";lastImg="";
-        const container = document.getElementById('islandWaves');
-        container.style.background = 'linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff)';
-        container.style.webkitBackgroundClip = 'text';
-        container.style.backgroundClip = 'text';
         return;
     }
     if(url===lastImg)return;
@@ -366,10 +437,6 @@ function setArt(url){
     };
     img.onerror=()=>{
         img.style.display="none";ph.style.display="flex";lastImg="";
-        const container = document.getElementById('islandWaves');
-        container.style.background = 'linear-gradient(90deg, #ff007f, #7f00ff, #00f0ff)';
-        container.style.webkitBackgroundClip = 'text';
-        container.style.backgroundClip = 'text';
     };
     img.src=url;
 }
@@ -396,7 +463,7 @@ function populateList(items) {
     items.forEach(item => {
         const row = document.createElement("div");
         row.className = "list-item";
-        let visualMarkup = `<div class="list-thumb-ph">🎵</div>`;
+        let visualMarkup = `<div class="list-thumb-ph">${item.isPlaylist ? "📁" : "🎵"}</div>`;
         if (item.image) {
             visualMarkup = `<img class="list-thumb" src="${item.image}" onerror="this.style.display='none'" />`;
         }
@@ -404,22 +471,38 @@ function populateList(items) {
             ${visualMarkup}
             <div class="list-info">
                 <div class="list-title">${item.title}</div>
-                <div class="list-sub">${item.sub}</div>
+                <div class="list-sub">${item.artist || item.id || ""}</div>
             </div>
         `;
         row.addEventListener('click', () => {
-            window.electronAPI.sendControl('searchPlay', item.title + " " + item.sub);
+            if (item.isPlaylist) {
+                viewingPlaylist = true;
+                document.getElementById('drawerTabs').style.display = 'none';
+                document.getElementById('backBtn').style.display = 'block';
+                window.electronAPI.sendControl('getPlaylistTracks', item.id);
+            } else {
+                window.electronAPI.sendControl('playUri', item.id);
+            }
         });
         container.appendChild(row);
     });
 }
+
+document.getElementById('backBtn').addEventListener('click', () => {
+    viewingPlaylist = false;
+    document.getElementById('backBtn').style.display = 'none';
+    document.getElementById('drawerTabs').style.display = 'flex';
+    populateList(loadedPlaylistsMemory);
+});
 
 document.getElementById('islandWaves').addEventListener('click', () => {
     drawerOpen = !drawerOpen;
     const dr = document.getElementById("extendedDrawer");
     if (drawerOpen) {
         dr.classList.add("open");
-        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : recentTracksMemory);
+        if (!viewingPlaylist) {
+            window.electronAPI.sendControl('getRealPlaylists');
+        }
     } else {
         dr.classList.remove("open");
     }
@@ -438,7 +521,7 @@ document.getElementById('artPh').addEventListener('click', () => {
 document.getElementById('tabPlaylists').addEventListener('click', (e) => {
     document.getElementById('tabRecents').classList.remove('active');
     e.target.classList.add('active');
-    populateList(mockupPlaylists);
+    window.electronAPI.sendControl('getRealPlaylists');
 });
 
 document.getElementById('tabRecents').addEventListener('click', (e) => {
@@ -447,14 +530,17 @@ document.getElementById('tabRecents').addEventListener('click', (e) => {
     populateList(recentTracksMemory);
 });
 
-document.getElementById('searchBox').addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    if(!q) {
-        populateList(document.getElementById('tabPlaylists').classList.contains('active') ? mockupPlaylists : recentTracksMemory);
-        return;
+window.electronAPI.onPlaylistsReply((playlists) => {
+    loadedPlaylistsMemory = playlists;
+    if (document.getElementById('tabPlaylists').classList.contains('active') && !viewingPlaylist) {
+        populateList(playlists);
     }
-    const filtered = [...mockupPlaylists, ...recentTracksMemory].filter(i => i.title.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q));
-    populateList(filtered);
+});
+
+window.electronAPI.onTracksReply((tracks) => {
+    if (viewingPlaylist) {
+        populateList(tracks);
+    }
 });
 
 document.getElementById('searchBox').addEventListener('keydown', (e) => {
@@ -491,11 +577,8 @@ window.electronAPI.onSpotifyData((d) => {
     paint();
 
     if (d.track && d.track !== "Spotify" && !recentTracksMemory.some(t => t.title === d.track)) {
-        recentTracksMemory.unshift({ title: d.track, sub: d.artist, image: d.image });
+        recentTracksMemory.unshift({ title: d.track, artist: d.artist, id: d.track, image: d.image });
         if (recentTracksMemory.length > 20) recentTracksMemory.pop();
-        if (document.getElementById('tabRecents').classList.contains('active')) {
-            populateList(recentTracksMemory);
-        }
     }
 });
 
@@ -512,13 +595,13 @@ setInterval(() => {
         if (playing) {
             const randomHeight = Math.floor(Math.random() * 16) + 4;
             bar.style.height = randomHeight + 'px';
+            bar.style.marginTop = (20 - randomHeight) + 'px';
         } else {
             bar.style.height = '4px';
+            bar.style.marginTop = '16px';
         }
     });
 }, 150);
-
-populateList(mockupPlaylists);
 </script>
 </body>
 </html>

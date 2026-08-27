@@ -110,7 +110,11 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
     "mac": {
       "category": "public.app-category.music",
       "target": "dir",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.png"
+    },
+    "directories": {
+      "buildResources": "build"
     }
   },
   "devDependencies": {
@@ -438,7 +442,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 PREEOF
 spinner_stop ok "preload.js written"
 spinner_start "writing icon + overlay.html..."
-echo "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAWklEQVQ4y2P4//8/AyUYGegETGg0gGgD0M0gWh9WDRDVAHQzSDYAXQ0w1gB0M8g2AN0MMNYAdDPINgDdDLL1YdUAUQ0g2gB0M4jWh1UDRDWAaAPQzSBaH8wAALw9GBl7N9GNAAAAAElFTkSuQmCC" | base64 -d > "$INSTALL_DIR/icon.png" 2>/dev/null || touch "$INSTALL_DIR/icon.png"
+mkdir -p "$INSTALL_DIR/build"
+echo "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAACXBIWXMAAAsTAAALEwEAmpwYAAAF0WlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNy4xLWMwMDAgNzkuZWRhMmIzZmFjLCAyMDIxLzExLzE3LTE3OjIzOjE5ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyIgeG1sbnM6cGhvdG9zaG9wPSJodHRwOi8vbnMuYWRvYmUuY29tL3Bob3Rvc2hvcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RFdnQ9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZUV2ZW50IyIgeG1wOkNyZWF0b3JUb29sPSJBZG9iZSBQaG90b3Nob3AgMjMuMSAoTWFjaW50b3NoKSIgeG1wOkNyZWF0ZURhdGU9IjIwMjQtMDEtMDFUMDA6MDA6MDArMDA6MDAiIHhtcDpNb2RpZnlEYXRlPSIyMDI0LTAxLTAxVDAwOjAwOjAwKzAwOjAwIiB4bXA6TWV0YWRhdGFEYXRlPSIyMDI0LTAxLTAxVDAwOjAwOjAwKzAwOjAwIiBkYzpmb3JtYXQ9ImltYWdlL3BuZyIgcGhvdG9zaG9wOkNvbG9yTW9kZT0iMyIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo5ZjU5ZjU5Zi01ZjU5LTRmNTktYWY1OS01ZjU5ZjU5ZjU5ZjUiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6OWY1OWY1OWYtNWY1OS00ZjU5LWFmNTktNWY1OWY1OWY1OWY1IiB4bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ9InhtcC5kaWQ6OWY1OWY1OWYtNWY1OS00ZjU5LWFmNTktNWY1OWY1OWY1OWY1Ij4gPHhtcE1NOkhpc3Rvcnk+IDxyZGY6U2VxPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0iY3JlYXRlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDo5ZjU5ZjU5Zi01ZjU5LTRmNTktYWY1OS01ZjU5ZjU5ZjU5ZjUiIHN0RXZ0OndoZW49IjIwMjQtMDEtMDFUMDA6MDA6MDArMDA6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyMy4xIChNYWNpbnRvc2gpIi8+IDwvcmRmOlNlcT4gPC94bXBNTTpIaXN0b3J5PiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PgH//v38+/r5+Pf29fTz8vHw7+7t7Ovq6ejn5uXk4+Lh4N/e3dzb2tnY19bV1NPS0dDPzs3My8rJyMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqmop6alpKOioaCfnp2cm5qZmJeWlZSTkpGQj46NjIuKiYiHhoWEg4KBgH9+fXx7enl4d3Z1dHNycXBvbm1sa2ppaGdmZWRjYmFgX15dXFtaWVhXVlVUU1JRUE9OTUxLSklIR0ZFRENCQUA/Pj08Ozo5ODc2NTQzMjEwLy4tLCsqKSgnJiUkIyIhIB8eHRwbGhkYFxYVFBMSERAPDg0MCwoJCAcGBQQDAgEAACH5BAkKAAAALAAAAAABAAEAAAICRAEAOw==" | base64 -d > "$INSTALL_DIR/build/icon.png" 2>/dev/null || true
+cp "$INSTALL_DIR/build/icon.png" "$INSTALL_DIR/icon.png" 2>/dev/null || true
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -652,13 +658,16 @@ npm install --silent 2>/dev/null || npm install
 spinner_stop ok "dependencies installed"
 spinner_start "building real app..."
 npx electron-builder --mac --dir 2>/dev/null || true
-APP_PATH=$(find "$INSTALL_DIR/dist" -name "kitty123.app" 2>/dev/null | head -1)
+APP_PATH=$(find "$INSTALL_DIR/dist" -name "*.app" 2>/dev/null | head -1)
 if [[ -d "$APP_PATH" ]]; then
-    rm -rf "/Applications/kitty123.app"
-    cp -R "$APP_PATH" "/Applications/kitty123.app"
-    xattr -cr "/Applications/kitty123.app" 2>/dev/null || true
-    spinner_stop ok "app installed to /Applications"
-    open "/Applications/kitty123.app"
+    FINAL_APP="/Applications/kitty123.app"
+    rm -rf "$FINAL_APP"
+    cp -R "$APP_PATH" "$FINAL_APP"
+    xattr -cr "$FINAL_APP" 2>/dev/null || true
+    xattr -d com.apple.quarantine "$FINAL_APP" 2>/dev/null || true
+    codesign --force --deep --sign - "$FINAL_APP" 2>/dev/null || true
+    spinner_stop ok "app installed to /Applications/kitty123.app"
+    open "$FINAL_APP"
 else
     spinner_stop warn "build failed - launching temporary version"
     nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
@@ -668,5 +677,5 @@ echo ""
 printf "  ${C_GREEN}✔  All done — kitty123 is installed${C_RESET}\n"
 echo ""
 log "App is in /Applications/kitty123.app"
-log "Open the drawer (click the waves) → Playlists"
+log "To change the icon: replace ~/spotify-overlay-app/build/icon.png then re-run"
 echo ""

@@ -87,7 +87,7 @@ printf "  ${C_CYAN}1.${C_RESET} Open this link in your browser:\n"
 echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative"
 echo ""
 printf "  ${C_YELLOW}Enter your token: ${C_RESET}"
-read -r TOKEN
+read -r TOKEN < /dev/tty
 TOKEN=$(echo "$TOKEN" | tr -d '[:space:]')
 if [[ -z "$TOKEN" ]]; then
     die "no token given"

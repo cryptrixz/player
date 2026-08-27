@@ -86,27 +86,14 @@ echo ""
 printf "  ${C_CYAN}1.${C_RESET} Open this link in your browser:\n"
 echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative"
 echo ""
-printf "  ${C_CYAN}2.${C_RESET} Paste the CODE you get and press Enter: "
-read -r CODE
-CODE=$(echo "$CODE" | tr -d '[:space:]')
-if [[ -z "$CODE" ]]; then
-    die "no code given"
+printf "  ${C_YELLOW}Enter your token: ${C_RESET}"
+read -r TOKEN
+TOKEN=$(echo "$TOKEN" | tr -d '[:space:]')
+if [[ -z "$TOKEN" ]]; then
+    die "no token given"
 fi
-
-spinner_start "connecting to Spotify..."
-RESPONSE=$(curl -s -X POST "https://accounts.spotify.com/api/token" \
-  -H "Authorization: Basic $(echo -n '4119f479e60d4a049e3d384ec366dc65:d7a0a39742f24c228af25e0b0ef56ef7' | base64)" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code" \
-  -d "code=$CODE" \
-  -d "redirect_uri=https://cryptrixz.github.io/player/callback.html")
-
-REFRESH=$(echo "$RESPONSE" | grep -o '"refresh_token":"[^"]*"' | cut -d'"' -f4)
-if [[ -z "$REFRESH" ]]; then
-    die "failed to get refresh token - try again"
-fi
-echo "$REFRESH" > "$INSTALL_DIR/token.txt"
-spinner_stop ok "connected permanently"
+echo "$TOKEN" > "$INSTALL_DIR/token.txt"
+log "token saved"
 
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
@@ -137,15 +124,20 @@ const TOKEN_PATH = path.join(__dirname, 'token.txt');
 async function getToken() {
     if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
     try {
-        const refresh = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
-        if (!refresh) return null;
+        const stored = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+        if (!stored) return null;
+        if (stored.length > 100) {
+            accessToken = stored;
+            tokenExpires = Date.now() + 3500000;
+            return accessToken;
+        }
         const res = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64')
             },
-            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(refresh)
+            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(stored)
         });
         const data = await res.json();
         if (data.access_token) {
@@ -613,5 +605,5 @@ echo ""
 printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
 echo ""
 log "Open the drawer (click the waves) → Playlists"
-log "Connected permanently (token saved)"
+log "Token saved"
 echo ""

@@ -1,14 +1,25 @@
 {
-  "name": "spotify-overlay-backend",
+  "name": "kitty123",
+  "productName": "kitty123",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "electron .",
+    "build": "electron-builder --mac"
   },
-  "engines": {
-    "node": ">=18"
+  "build": {
+    "appId": "com.kitty123.overlay",
+    "productName": "kitty123",
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dir"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "node-fetch": "^2.7.0"
   }
 }

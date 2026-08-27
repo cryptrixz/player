@@ -76,24 +76,24 @@ pkill -f "electron" 2>/dev/null || true
 pkill -f "kitty123" 2>/dev/null || true
 sleep 0.7
 spinner_stop ok "old processes stopped"
-INSTALL_DIR="$HOME/spotify-overlay-app"
+INSTALL_DIR="$HOME/kitty123"
 spinner_start "cleaning previous install..."
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 spinner_stop ok "clean"
 echo ""
-printf "  ${C_CYAN}1.${C_RESET} Open this link in your browser:\n"
+printf "  \033[38;2;120;180;255m1.\033[0m Open this link in your browser:\n"
 echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative%20user-library-read"
 echo ""
-printf "  ${C_YELLOW}Paste your token and press Enter: ${C_RESET}"
+printf "  \033[38;2;120;180;255mPaste your token and press Enter: \033[0m"
 TOKEN=$(head -n 1 < /dev/tty | tr -d '[:space:]')
 if [[ -z "$TOKEN" ]]; then
     die "no token given"
 fi
 echo "$TOKEN" > "$INSTALL_DIR/token.txt"
 log "token saved"
-spinner_start "writing package.json..."
+spinner_start "writing files..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 {
   "name": "kitty123",
@@ -105,7 +105,7 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
     "build": "electron-builder --mac --dir"
   },
   "build": {
-    "appId": "com.kitty123.overlay",
+    "appId": "com.kitty123.app",
     "productName": "kitty123",
     "mac": {
       "category": "public.app-category.music",
@@ -126,8 +126,6 @@ cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
   }
 }
 PKGEOF
-spinner_stop ok "package.json written"
-spinner_start "writing app.js..."
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
 const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
@@ -427,8 +425,6 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 APPEOF
-spinner_stop ok "app.js written"
-spinner_start "writing preload.js..."
 cat > "$INSTALL_DIR/preload.js" << 'PREEOF'
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -440,11 +436,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resizeWindow: (bounds) => ipcRenderer.send('resize-window', bounds)
 });
 PREEOF
-spinner_stop ok "preload.js written"
-spinner_start "writing icon + overlay.html..."
 mkdir -p "$INSTALL_DIR/build"
-echo "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAACXBIWXMAAAsTAAALEwEAmpwYAAAF0WlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNy4xLWMwMDAgNzkuZWRhMmIzZmFjLCAyMDIxLzExLzE3LTE3OjIzOjE5ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyIgeG1sbnM6cGhvdG9zaG9wPSJodHRwOi8vbnMuYWRvYmUuY29tL3Bob3Rvc2hvcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RFdnQ9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZUV2ZW50IyIgeG1wOkNyZWF0b3JUb29sPSJBZG9iZSBQaG90b3Nob3AgMjMuMSAoTWFjaW50b3NoKSIgeG1wOkNyZWF0ZURhdGU9IjIwMjQtMDEtMDFUMDA6MDA6MDArMDA6MDAiIHhtcDpNb2RpZnlEYXRlPSIyMDI0LTAxLTAxVDAwOjAwOjAwKzAwOjAwIiB4bXA6TWV0YWRhdGFEYXRlPSIyMDI0LTAxLTAxVDAwOjAwOjAwKzAwOjAwIiBkYzpmb3JtYXQ9ImltYWdlL3BuZyIgcGhvdG9zaG9wOkNvbG9yTW9kZT0iMyIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo5ZjU5ZjU5Zi01ZjU5LTRmNTktYWY1OS01ZjU5ZjU5ZjU5ZjUiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6OWY1OWY1OWYtNWY1OS00ZjU5LWFmNTktNWY1OWY1OWY1OWY1IiB4bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ9InhtcC5kaWQ6OWY1OWY1OWYtNWY1OS00ZjU5LWFmNTktNWY1OWY1OWY1OWY1Ij4gPHhtcE1NOkhpc3Rvcnk+IDxyZGY6U2VxPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0iY3JlYXRlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDo5ZjU5ZjU5Zi01ZjU5LTRmNTktYWY1OS01ZjU5ZjU5ZjU5ZjUiIHN0RXZ0OndoZW49IjIwMjQtMDEtMDFUMDA6MDA6MDArMDA6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyMy4xIChNYWNpbnRvc2gpIi8+IDwvcmRmOlNlcT4gPC94bXBNTTpIaXN0b3J5PiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PgH//v38+/r5+Pf29fTz8vHw7+7t7Ovq6ejn5uXk4+Lh4N/e3dzb2tnY19bV1NPS0dDPzs3My8rJyMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqmop6alpKOioaCfnp2cm5qZmJeWlZSTkpGQj46NjIuKiYiHhoWEg4KBgH9+fXx7enl4d3Z1dHNycXBvbm1sa2ppaGdmZWRjYmFgX15dXFtaWVhXVlVUU1JRUE9OTUxLSklIR0ZFRENCQUA/Pj08Ozo5ODc2NTQzMjEwLy4tLCsqKSgnJiUkIyIhIB8eHRwbGhkYFxYVFBMSERAPDg0MCwoJCAcGBQQDAgEAACH5BAkKAAAALAAAAAABAAEAAAICRAEAOw==" | base64 -d > "$INSTALL_DIR/build/icon.png" 2>/dev/null || true
-cp "$INSTALL_DIR/build/icon.png" "$INSTALL_DIR/icon.png" 2>/dev/null || true
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10\x00\x00\x00\x10\x08\x06\x00\x00\x00\x1f\xf3\xffa\x00\x00\x00\x19tEXtSoftware\x00Adobe ImageReadyq\xc9e<\x00\x00\x00\x0eIDATx\xdab\xfa\xcf\xc0\xc0\xc0\xc0\x00\x00\x00\x05\x00\x01\x0d\n-\xdb\x00\x00\x00\x00IEND\xaeB`\x82' > "$INSTALL_DIR/build/icon.png"
+cp "$INSTALL_DIR/build/icon.png" "$INSTALL_DIR/icon.png"
 cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -652,12 +646,10 @@ setInterval(()=>{bars.forEach(bar=>{if(playing){bar.style.height=(Math.floor(Mat
 </body>
 </html>
 HTMLEOF
-spinner_stop ok "overlay.html written"
-spinner_start "installing dependencies..."
-npm install --silent 2>/dev/null || npm install
-spinner_stop ok "dependencies installed"
-spinner_start "building real app..."
-npx electron-builder --mac --dir 2>/dev/null || true
+spinner_stop ok "files written"
+spinner_start "Installing App..."
+npm install --silent > /dev/null 2>&1 || npm install > /dev/null 2>&1
+npx electron-builder --mac --dir > /dev/null 2>&1 || true
 APP_PATH=$(find "$INSTALL_DIR/dist" -name "*.app" 2>/dev/null | head -1)
 if [[ -d "$APP_PATH" ]]; then
     FINAL_APP="/Applications/kitty123.app"
@@ -666,16 +658,16 @@ if [[ -d "$APP_PATH" ]]; then
     xattr -cr "$FINAL_APP" 2>/dev/null || true
     xattr -d com.apple.quarantine "$FINAL_APP" 2>/dev/null || true
     codesign --force --deep --sign - "$FINAL_APP" 2>/dev/null || true
-    spinner_stop ok "app installed to /Applications/kitty123.app"
+    spinner_stop ok "Installed to /Applications/kitty123.app"
     open "$FINAL_APP"
 else
-    spinner_stop warn "build failed - launching temporary version"
+    spinner_stop warn "Build failed - launching temporary"
     nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
     disown
 fi
 echo ""
-printf "  ${C_GREEN}✔  All done — kitty123 is installed${C_RESET}\n"
+printf "  ${C_GREEN}✔  All done — kitty123 is ready${C_RESET}\n"
 echo ""
-log "App is in /Applications/kitty123.app"
-log "To change the icon: replace ~/spotify-overlay-app/build/icon.png then re-run"
+log "App: /Applications/kitty123.app"
+log "Icon: ~/kitty123/build/icon.png (replace this file to change logo)"
 echo ""

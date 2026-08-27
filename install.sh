@@ -73,6 +73,7 @@ trap cleanup EXIT INT TERM
 banner
 spinner_start "stopping old processes..."
 pkill -f "electron" 2>/dev/null || true
+pkill -f "kitty123" 2>/dev/null || true
 sleep 0.7
 spinner_stop ok "old processes stopped"
 INSTALL_DIR="$HOME/spotify-overlay-app"
@@ -81,35 +82,52 @@ rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 spinner_stop ok "clean"
-
 echo ""
 printf "  ${C_CYAN}1.${C_RESET} Open this link in your browser:\n"
-echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative"
+echo "  https://accounts.spotify.com/authorize?client_id=4119f479e60d4a049e3d384ec366dc65&response_type=code&redirect_uri=https%3A%2F%2Fcryptrixz.github.io%2Fplayer%2Fcallback.html&scope=user-read-private%20user-read-email%20playlist-read-private%20playlist-read-collaborative%20user-library-read"
 echo ""
 printf "  ${C_YELLOW}Enter your token: ${C_RESET}"
-read -r TOKEN < /dev/tty
+exec < /dev/tty
+read -r TOKEN
 TOKEN=$(echo "$TOKEN" | tr -d '[:space:]')
 if [[ -z "$TOKEN" ]]; then
     die "no token given"
 fi
 echo "$TOKEN" > "$INSTALL_DIR/token.txt"
 log "token saved"
-
 spinner_start "writing package.json..."
 cat > "$INSTALL_DIR/package.json" << 'PKGEOF'
 {
-  "name": "spotify-overlay-desktop",
+  "name": "kitty123",
+  "productName": "kitty123",
   "version": "1.0.0",
   "main": "app.js",
-  "scripts": { "start": "electron ." },
-  "devDependencies": { "electron": "^31.0.0" },
-  "dependencies": { "node-fetch": "^2.7.0" }
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "com.kitty123.overlay",
+    "productName": "kitty123",
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dir",
+      "identity": null
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
 }
 PKGEOF
 spinner_stop ok "package.json written"
 spinner_start "writing app.js..."
 cat > "$INSTALL_DIR/app.js" << 'APPEOF'
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
@@ -121,6 +139,7 @@ let tokenExpires = 0;
 const CLIENT_ID = "4119f479e60d4a049e3d384ec366dc65";
 const CLIENT_SECRET = "d7a0a39742f24c228af25e0b0ef56ef7";
 const TOKEN_PATH = path.join(__dirname, 'token.txt');
+const PLAYLISTS_PATH = path.join(__dirname, 'playlists.json');
 async function getToken() {
     if (accessToken && Date.now() < tokenExpires - 60000) return accessToken;
     try {
@@ -157,6 +176,46 @@ async function spotifyGet(endpoint) {
     });
     if (!res.ok) return null;
     return res.json();
+}
+function loadCachedPlaylists() {
+    try {
+        if (fs.existsSync(PLAYLISTS_PATH)) {
+            return JSON.parse(fs.readFileSync(PLAYLISTS_PATH, 'utf8'));
+        }
+    } catch (e) {}
+    return null;
+}
+function savePlaylists(playlists) {
+    try {
+        fs.writeFileSync(PLAYLISTS_PATH, JSON.stringify(playlists, null, 2));
+    } catch (e) {}
+}
+async function extractDominantColor(imageUrl) {
+    if (!imageUrl) return null;
+    try {
+        const res = await fetch(imageUrl);
+        if (!res.ok) return null;
+        const buf = await res.buffer();
+        const img = nativeImage.createFromBuffer(buf);
+        if (img.isEmpty()) return null;
+        const size = img.getSize();
+        const w = Math.min(16, size.width);
+        const h = Math.min(16, size.height);
+        const resized = img.resize({ width: w, height: h });
+        const png = resized.toPNG();
+        let r = 0, g = 0, b = 0, count = 0;
+        for (let i = 0; i < png.length - 3; i += 4) {
+            const pr = png[i], pg = png[i + 1], pb = png[i + 2];
+            const sum = pr + pg + pb;
+            if (sum > 40 && sum < 700) {
+                r += pr; g += pg; b += pb; count++;
+            }
+        }
+        if (count === 0) return null;
+        return { r: Math.floor(r / count), g: Math.floor(g / count), b: Math.floor(b / count) };
+    } catch (e) {
+        return null;
+    }
 }
 function playUriQuiet(uri) {
     const script = `
@@ -197,7 +256,8 @@ function createOverlayWindow() {
     startAutomationLoops();
 }
 function createTrayMenu() {
-    tray = new Tray(path.join(__dirname, 'icon.png'));
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
+    tray = new Tray(icon);
     const contextMenu = Menu.buildFromTemplate([
         { label: 'Open Overlay', click: () => { if (win && !win.isDestroyed()) win.showInactive(); } },
         { label: 'Close Overlay', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
@@ -205,6 +265,7 @@ function createTrayMenu() {
         { label: 'Quit', click: () => app.quit() }
     ]);
     tray.setContextMenu(contextMenu);
+    tray.setToolTip('kitty123');
 }
 function startAutomationLoops() {
     setInterval(() => {
@@ -239,9 +300,9 @@ function startAutomationLoops() {
             end if
             return "No Track"
         `;
-        exec(`osascript -e '${appleScript}'`, (err, stdout) => {
+        exec(`osascript -e '${appleScript}'`, async (err, stdout) => {
             if (err || !stdout || stdout.trim() === "No Track") {
-                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "", id: "" });
+                win.webContents.send('spotify-data', { track: "Spotify", artist: "No track playing", position: 0, duration: 1, status: "paused", image: "", id: "", color: null });
                 return;
             }
             const parts = stdout.trim().split('||');
@@ -253,17 +314,19 @@ function startAutomationLoops() {
                 const isAd = trackTitle.toLowerCase().includes("advertisement") || artistName.toLowerCase().includes("spotify") || rawDur === 0;
                 const calculatedDur = isAd ? 30 : Math.floor(rawDur / 1000);
                 const calculatedPos = isAd ? Math.floor(rawPos) : rawPos;
+                let color = null;
+                if (parts[5]) color = await extractDominantColor(parts[5]);
                 win.webContents.send('spotify-data', {
                     track: trackTitle, artist: artistName,
                     duration: calculatedDur, position: calculatedPos,
-                    status: parts[4].toLowerCase(), image: parts[5], id: parts[6], isAd: isAd
+                    status: parts[4].toLowerCase(), image: parts[5], id: parts[6], isAd: isAd, color: color
                 });
             }
         });
     }, 250);
 }
 ipcMain.on('spotify-control', async (event, data) => {
-    if (['playpause','next','prev','scrub'].includes(data.action)) {
+    if (['playpause', 'next', 'prev', 'scrub'].includes(data.action)) {
         let script = '';
         if (data.action === 'playpause') script = 'tell application "Spotify" to playpause';
         if (data.action === 'next') script = 'tell application "Spotify" to next track';
@@ -277,6 +340,11 @@ ipcMain.on('spotify-control', async (event, data) => {
         return;
     }
     if (data.action === 'getRealPlaylists') {
+        const cached = loadCachedPlaylists();
+        if (cached && cached.length > 0) {
+            win.webContents.send('playlists-reply', cached);
+            return;
+        }
         try {
             let all = [];
             let url = '/me/playlists?limit=50';
@@ -291,6 +359,7 @@ ipcMain.on('spotify-control', async (event, data) => {
                 })));
                 url = res.next ? res.next.replace('https://api.spotify.com/v1', '') : null;
             }
+            if (all.length > 0) savePlaylists(all);
             win.webContents.send('playlists-reply', all);
         } catch (e) {
             win.webContents.send('playlists-reply', []);
@@ -377,7 +446,7 @@ cat > "$INSTALL_DIR/overlay.html" << 'HTMLEOF'
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>kitty123 Overlay</title>
+<title>kitty123</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent !important;background-color:rgba(0,0,0,0) !important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
@@ -452,11 +521,9 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
   <div class="back-btn" id="backBtn">&lt; Back to Playlists</div>
   <div class="list-container" id="listContainer"></div>
 </div>
-<canvas id="colorCanvas" style="display:none;" width="10" height="10"></canvas>
 <script>
 let total=1,pos=0,playing=false,lastImg="",baseScale=1.0,drawerOpen=false,viewingPlaylist=false;
 let recentTracksMemory=[],loadedPlaylistsMemory=[],currentGradient="linear-gradient(180deg,#78b4ff,#4a90e2,#2a6fd6)";
-const canvas=document.getElementById("colorCanvas"),ctx=canvas.getContext("2d");
 function fmt(s){s=Math.max(0,Math.floor(s+.5));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 function updateWaveColors(r,g,b){
     const r2=Math.min(255,r+40),g2=Math.min(255,g+30),b2=Math.min(255,b+50);
@@ -464,23 +531,12 @@ function updateWaveColors(r,g,b){
     currentGradient=`linear-gradient(180deg,rgb(${r},${g},${b}),rgb(${r2},${g2},${b2}),rgb(${r3},${g3},${b3}))`;
     document.querySelectorAll('.wave-bar').forEach(bar=>{bar.style.background=currentGradient});
 }
-function extractColorAndTint(imgEl){
-    try{
-        ctx.drawImage(imgEl,0,0,10,10);
-        const data=ctx.getImageData(0,0,10,10).data;
-        let r=0,g=0,b=0,count=0;
-        for(let i=0;i<data.length;i+=4){
-            if(data[i]+data[i+1]+data[i+2]>60&&data[i]+data[i+1]+data[i+2]<680){r+=data[i];g+=data[i+1];b+=data[i+2];count++}
-        }
-        if(count>0){r=Math.floor(r/count);g=Math.floor(g/count);b=Math.floor(b/count);updateWaveColors(r,g,b)}
-    }catch(e){}
-}
 function setArt(url){
     const img=document.getElementById("art"),ph=document.getElementById("artPh");
     if(!url){img.style.display="none";ph.style.display="flex";lastImg="";return}
     if(url===lastImg)return;
-    lastImg=url;img.crossOrigin="Anonymous";
-    img.onload=()=>{img.style.display="block";ph.style.display="none";extractColorAndTint(img)};
+    lastImg=url;
+    img.onload=()=>{img.style.display="block";ph.style.display="none"};
     img.onerror=()=>{img.style.display="none";ph.style.display="flex";lastImg=""};
     img.src=url;
 }
@@ -501,7 +557,7 @@ function populateList(items){
     const container=document.getElementById("listContainer");
     container.innerHTML="";
     if(!items||items.length===0){
-        container.innerHTML=`<div class="search-hint">No playlists found</div>`;
+        container.innerHTML=`<div class="search-hint">No playlists found<br><br>Try pasting a fresh token</div>`;
         return;
     }
     items.forEach(item=>{
@@ -576,8 +632,11 @@ window.electronAPI.onSpotifyData(d=>{
     if(!playing||Math.abs(incomingPos-pos)>2)pos=incomingPos;
     playing=d.status==="playing"||d.status==="kpsp";
     document.getElementById("btnPP").textContent=playing?"||":"|>";
-    setArt(d.image||"");paint();
-    if(d.track&&d.track!=="Spotify"&&d.id&&!recentTracksMemory.some(t=>t.id===d.id)){
+    setArt(d.image||"");
+    if(d.color) updateWaveColors(d.color.r, d.color.g, d.color.b);
+    paint();
+    const isAd = d.isAd || (d.track && d.track.toLowerCase().includes("advertisement")) || (d.artist && d.artist.toLowerCase().includes("spotify")) || (d.duration && Number(d.duration) < 35);
+    if(d.track && d.track!=="Spotify" && d.id && !isAd && !recentTracksMemory.some(t=>t.id===d.id)){
         recentTracksMemory.unshift({title:d.track,artist:d.artist,id:d.id,image:d.image});
         if(recentTracksMemory.length>20)recentTracksMemory.pop();
     }
@@ -592,18 +651,24 @@ HTMLEOF
 spinner_stop ok "overlay.html written"
 spinner_start "installing dependencies..."
 npm install --silent 2>/dev/null || npm install
-xattr -cr "$INSTALL_DIR/node_modules/electron" 2>/dev/null || true
-codesign --force --deep --sign - "$INSTALL_DIR/node_modules/electron/dist/Electron.app" 2>/dev/null || true
 spinner_stop ok "dependencies installed"
-spinner_start "launching kitty123..."
-sleep 1
-nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
-disown
-sleep 1
-spinner_stop ok "kitty123 launched"
+spinner_start "building real app..."
+npx electron-builder --mac --dir 2>/dev/null || true
+APP_PATH=$(find "$INSTALL_DIR/dist" -name "kitty123.app" 2>/dev/null | head -1)
+if [[ -d "$APP_PATH" ]]; then
+    rm -rf "/Applications/kitty123.app"
+    cp -R "$APP_PATH" "/Applications/kitty123.app"
+    xattr -cr "/Applications/kitty123.app" 2>/dev/null || true
+    spinner_stop ok "app installed to /Applications"
+    open "/Applications/kitty123.app"
+else
+    spinner_stop warn "build failed - launching temporary version"
+    nohup npm start > "$INSTALL_DIR/overlay.log" 2>&1 &
+    disown
+fi
 echo ""
-printf "  ${C_GREEN}✔  All done — enjoy kitty123${C_RESET}\n"
+printf "  ${C_GREEN}✔  All done — kitty123 is installed${C_RESET}\n"
 echo ""
+log "App is in /Applications/kitty123.app"
 log "Open the drawer (click the waves) → Playlists"
-log "Token saved"
 echo ""
